@@ -92,18 +92,16 @@
 
 | 层次 | 技术选型 |
 |------|----------|
-| 层次 | 技术选型 |
-|------|----------|
 | 编程语言 | Python 3.11+ |
-| 任务编排 | LangGraph / 自研图引擎 |
-| 知识检索 | 向量数据库（Milvus / Qdrant）+ 混合检索 |
-| LLM 接入 | OpenAI API / DeepSeek API / 本地模型 |
-| 工作流引擎 | 基于有向无环图（DAG）的自研引擎 |
+| 任务编排 | 基于 **LangGraph** 封装实现 |
+| 知识检索 | **Milvus** 向量数据库 + 混合检索 |
+| LLM 接入 | **Provider 抽象层**（当前接入 DeepSeek API） |
+| 工作流引擎 | LangGraph 图编排框架 |
 | API 框架 | FastAPI |
 | 可观测性 | OpenTelemetry + Prometheus + Grafana |
 | 前端框架 | React + TypeScript + Vite |
-| 可视化引擎 | React Flow / Cytoscape.js（工作流画布） |
-| UI 组件库 | Ant Design / shadcn/ui |
-| 状态管理 | Zustand / Redux Toolkit |
-| 图表与监控 | ECharts / D3.js（监控看板） |
+| 可视化引擎 | React Flow（工作流画布） |
+| UI 组件库 | Ant Design |
+| 状态管理 | Zustand |
+| 图表与监控 | ECharts（监控看板） |
 | 存储 | PostgreSQL + Redis |
