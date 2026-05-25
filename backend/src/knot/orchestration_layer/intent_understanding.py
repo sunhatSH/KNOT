@@ -113,6 +113,10 @@ Rules:
 - Set needs_knowledge=true for research/analysis steps
 - For tasks requiring multiple perspectives, set multi_agent_mode to "parallel"
 - For tasks needing validation, include a validator step
+- The "task_description" field MUST be a non-empty summary of the user's request
+- All "label" fields MUST be non-empty and descriptive (never use "Untitled" or "Step" as labels)
+- All "description" fields MUST be non-empty and explain what the step does
+- Never return empty strings for any required field
 
 You may use English field names (as shown in the example below) or Chinese
 field names. Chinese field names are automatically mapped, so both forms
@@ -123,26 +127,51 @@ are valid:
   - 知识域 / 知识领域 -> knowledge_domains
   - 全局指令 -> global_instructions
   - 标签 -> label
+  - 描述 -> description
   - agent角色 / 角色 -> agent_role
   - 依赖 -> depends_on
+  - 步骤 -> steps
 
-Respond ONLY with valid JSON (no markdown, no extra text). Example structure:
+Respond ONLY with valid JSON. Do NOT include any text or markdown before or
+after the JSON object -- no explanations, no commentary.
+
+Example with Chinese input:
+User request: 搜索并分析最新的AI论文，然后生成一份总结报告
+Response:
 {
-  "task_description": "summary of the task",
+  "task_description": "搜索并分析最新的AI论文并生成总结报告",
   "subtasks": [
     {
-      "label": "short unique name",
-      "description": "what this sub-task does",
-      "agent_role": "executor|researcher|coder|validator|summarizer",
-      "depends_on": ["label_of_prerequisite"],
-      "node_type": "input|task|output|condition",
-      "multi_agent_mode": "single|parallel",
-      "needs_knowledge": true or false
+      "label": "SearchLatestPapers",
+      "description": "Search for the most recent AI research papers from academic sources",
+      "agent_role": "researcher",
+      "depends_on": [],
+      "node_type": "input",
+      "multi_agent_mode": "single",
+      "needs_knowledge": true
+    },
+    {
+      "label": "AnalyzeFindings",
+      "description": "Analyze the search results, extract key findings, and identify trends",
+      "agent_role": "researcher",
+      "depends_on": ["SearchLatestPapers"],
+      "node_type": "task",
+      "multi_agent_mode": "parallel",
+      "needs_knowledge": true
+    },
+    {
+      "label": "GenerateSummaryReport",
+      "description": "Generate a comprehensive summary report based on the analysis",
+      "agent_role": "summarizer",
+      "depends_on": ["AnalyzeFindings"],
+      "node_type": "output",
+      "multi_agent_mode": "single",
+      "needs_knowledge": true
     }
   ],
-  "expected_output": "description of final output",
-  "knowledge_domains": ["topic1", "topic2"],
-  "global_instructions": "any special instructions"
+  "expected_output": "一份关于最新AI论文的总结报告",
+  "knowledge_domains": ["人工智能", "machine learning", "NLP"],
+  "global_instructions": ""
 }
 
 User request: %s
@@ -196,7 +225,7 @@ class IntentParser:
 
         response = await self._llm.chat(messages, temperature=0.2)
         logger.warning("LLM raw response: %.500s", response.content)
-        intent = self._parse_response(response.content)
+        intent = self._parse_response(response.content, user_request)
 
         # If JSON parsing failed or no subtasks extracted, try LLM re-parse
         if intent is None or not intent.subtasks:
@@ -215,7 +244,7 @@ class IntentParser:
             ]
             response = await self._llm.chat(retry_messages, temperature=0.1)
             logger.warning("LLM re-parse response: %.500s", response.content)
-            intent = self._parse_response(response.content)
+            intent = self._parse_response(response.content, user_request)
 
         # Final fallback if all parsing attempts fail
         if intent is None or not intent.subtasks:
@@ -231,41 +260,61 @@ class IntentParser:
         )
         return intent
 
-    def _parse_response(self, content: str) -> Intent | None:
+    def _parse_response(self, content: str, user_request: str = "") -> Intent | None:
         """Parse LLM response JSON into an Intent object.
 
         Handles:
-        - ```json ... ``` and ``` ... ``` markdown code blocks
+        - ```json ... ``` and ``` ... ``` markdown code blocks anywhere in text
         - Chinese field names (e.g. "任务描述" -> "task_description")
         - Regex-based JSON extraction when direct parsing fails
         - Both dict ({"subtasks": [...]}) and list ([{...}, ...]) response formats
+        - Single dict subtask (wraps it in a list)
+        - Empty fields with fallback to user_request
 
         Returns None if all parsing methods fail (caller may retry with LLM).
         """
         text = content.strip()
+        logger.info("Parsing LLM response of %d characters", len(text))
+        logger.debug("Raw response starts: %.200s", text)
 
-        # 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
-        if text.startswith("```"):
-            first_newline = text.find("\n")
-            if first_newline != -1:
-                text = text[first_newline + 1:]
-            else:
-                text = text[3:]  # strip bare ```
-            # Remove trailing backticks
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
+        # 1. Find and extract markdown code blocks (```json ... ``` or ``` ... ```)
+        #    anywhere in the text, handling text before/after the fences
+        code_block_match = re.search(
+            r'```(?:json)?\s*\n(.+?)\n\s*```', text, re.DOTALL
+        )
+        if code_block_match:
+            extracted = code_block_match.group(1).strip()
+            logger.debug(
+                "Extracted text from markdown code block "
+                "(%d chars -> %d chars)",
+                len(text), len(extracted),
+            )
+            text = extracted
+        else:
+            # Fallback: handle ``` at very start (no text before fence)
+            if text.startswith("```"):
+                first_newline = text.find("\n")
+                if first_newline != -1:
+                    text = text[first_newline + 1:]
+                else:
+                    text = text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
 
         # 2. Try direct JSON parsing
         data = None
         try:
             data = json.loads(text)
+            logger.debug("Direct JSON parse succeeded")
         except json.JSONDecodeError:
-            logger.warning("Direct JSON parse failed, trying regex extraction")
+            logger.warning("Direct JSON parse failed on: %.120s", text)
 
         # 3. Try regex extraction if direct parsing failed
         if data is None:
             data = self._extract_json_with_regex(text)
+            if data is not None:
+                logger.debug("Regex JSON extraction succeeded")
 
         if data is None:
             logger.warning(
@@ -276,6 +325,7 @@ class IntentParser:
         # 4. Map Chinese field names to English at the top level
         if isinstance(data, dict):
             data = self._map_chinese_fields(data)
+            logger.debug("Mapped top-level fields: %s", list(data.keys()))
 
         # 5. Handle both dict ({"subtasks": [...]}) and list ([{...}, ...]) responses
         if isinstance(data, list):
@@ -291,6 +341,11 @@ class IntentParser:
             domains = data.get("knowledge_domains", data.get("domains", []))
             instructions = data.get("global_instructions", "")
 
+        # 5b. Handle single-item subtask returned as dict instead of list
+        if isinstance(raw_subtasks, dict):
+            logger.debug("Wrapping single subtask dict in list")
+            raw_subtasks = [raw_subtasks]
+
         # 6. Build subtasks (also mapping Chinese fields in each subtask item)
         subtasks = []
         for st in raw_subtasks if isinstance(raw_subtasks, list) else []:
@@ -298,10 +353,17 @@ class IntentParser:
                 st = self._map_chinese_fields(st)
 
             label = st.get("label", st.get("name", "Untitled Step"))
+            if not label:
+                label = "Untitled Step"
+
+            description = st.get("description", "")
+            if not description and label != "Untitled Step":
+                description = label[:200]
+
             subtasks.append(
                 SubTask(
                     label=label,
-                    description=st.get("description", ""),
+                    description=description,
                     agent_role=st.get(
                         "agent_role", st.get("role", "executor")
                     ),
@@ -320,11 +382,44 @@ class IntentParser:
             logger.warning("No subtasks extracted from parsed JSON")
             return None
 
+        # 7. Validate subtask quality -- ensure at least one has a meaningful label
+        meaningful_labels = [
+            st.label for st in subtasks
+            if st.label and st.label != "Untitled Step"
+        ]
+        if not meaningful_labels:
+            logger.warning(
+                "All %d subtask(s) have empty/filler labels "
+                "(e.g. 'Untitled Step'), treating as parse failure",
+                len(subtasks),
+            )
+            return None
+
+        # 8. Fill in empty task_description with user_request if available
+        if not task_desc and user_request:
+            task_desc = user_request[:500]
+            logger.info(
+                "Filled empty task_description from user request: %.80s",
+                task_desc,
+            )
+
+        # 9. Fill in empty subtask descriptions from labels
+        for st in subtasks:
+            if not st.description and st.label and st.label != "Untitled Step":
+                st.description = st.label[:200]
+
+        logger.info(
+            "Parsed response: task_desc=%.80s, %d subtask(s), %d domain(s)",
+            task_desc,
+            len(subtasks),
+            len(domains) if isinstance(domains, list) else 0,
+        )
+
         return Intent(
-            task_description=task_desc,
+            task_description=task_desc or "User request",
             subtasks=subtasks,
-            expected_output=expected_out,
-            knowledge_domains=domains,
+            expected_output=expected_out or "Completed task output",
+            knowledge_domains=domains if isinstance(domains, list) else [],
             global_instructions=instructions,
         )
 
@@ -372,46 +467,94 @@ class IntentParser:
     def _create_fallback_intent(content: str) -> Intent:
         """Create a reasonable fallback Intent when all parsing methods fail.
 
-        Builds a small default DAG (requirements -> execute -> output) instead
-        of a single "Untitled Step".
+        Extracts meaningful step labels from the user's request text instead of
+        using generic defaults. Falls back to a simple DAG when the request
+        text cannot be parsed into segments.
         """
-        default_steps = [
-            (
-                "Understand Requirements",
-                "Analyze and understand the task requirements",
-                "planner",
-                "input",
-                [],
-            ),
-            (
-                "Execute Main Task",
-                "Perform the primary task execution",
-                "executor",
-                "task",
-                ["Understand Requirements"],
-            ),
-            (
-                "Generate Output",
-                "Produce and present the final output",
-                "summarizer",
-                "output",
-                ["Execute Main Task"],
-            ),
-        ]
+        # Split content by common punctuation to extract sub-requests
+        segments = re.split(r'[，,。.；;、\n]+', content)
+        segments = [s.strip() for s in segments if s.strip()]
+
+        if not segments:
+            segments = ["Process the request"]
+
+        # Map common Chinese action verbs to English subtask names
+        action_verbs = {
+            "搜索": "Search", "检索": "Search", "查找": "Find",
+            "分析": "Analyze", "解析": "Parse", "研究": "Research",
+            "总结": "Summarize", "归纳": "Summarize", "汇总": "Collate",
+            "生成": "Generate", "创建": "Create", "构建": "Build",
+            "提取": "Extract", "采集": "Collect", "收集": "Collect",
+            "验证": "Validate", "检查": "Check", "测试": "Test",
+            "规划": "Plan", "设计": "Design", "组织": "Organize",
+            "执行": "Execute", "运行": "Run", "处理": "Process",
+            "报告": "Report", "输出": "Output", "展示": "Display",
+            "比较": "Compare", "评估": "Evaluate", "审查": "Review",
+            "优化": "Optimize", "转换": "Transform",
+            "合并": "Merge", "分割": "Split", "过滤": "Filter",
+            "分类": "Classify", "排序": "Sort",
+        }
+
+        def _make_label(text: str) -> str:
+            """Convert a text segment into a concise English label."""
+            for cn, en in action_verbs.items():
+                if cn in text:
+                    remainder = text.replace(cn, "", 1).strip()
+                    remainder = re.sub(
+                        r'^(并|和|与|及|以及|然后|接着|再|，|,)\s*',
+                        '',
+                        remainder,
+                    )
+                    if remainder:
+                        return f"{en}{remainder[:30]}"
+                    return en
+            return text[:40]
+
         subtasks = []
-        for label, desc, role, ntype, depends_on in default_steps:
+        prev_label = None
+
+        for i, segment in enumerate(segments):
+            label = _make_label(segment)
+            depends_on = [prev_label] if prev_label else []
+
+            if i == 0:
+                role = (
+                    "researcher"
+                    if any(
+                        kw in segment
+                        for kw in ["搜索", "检索", "查找", "分析", "研究"]
+                    )
+                    else "planner"
+                )
+                node_type = "input"
+            elif i == len(segments) - 1:
+                role = (
+                    "summarizer"
+                    if any(
+                        kw in segment
+                        for kw in ["总结", "生成", "报告", "输出"]
+                    )
+                    else "executor"
+                )
+                node_type = "output"
+            else:
+                role = "executor"
+                node_type = "task"
+
             subtasks.append(
                 SubTask(
                     label=label,
-                    description=desc,
+                    description=segment[:200],
                     agent_role=role,
-                    node_type=ntype,
+                    node_type=node_type,
                     depends_on=depends_on,
-                    needs_knowledge=(role in ("researcher", "executor")),
+                    needs_knowledge=True,
                 )
             )
+            prev_label = label
+
         return Intent(
-            task_description=content[:200] if content else "User request",
+            task_description=content[:500] if content else "User request",
             subtasks=subtasks,
             expected_output="Completed task output",
         )

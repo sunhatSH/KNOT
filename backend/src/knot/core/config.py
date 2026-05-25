@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
 
     # Database
-    database_url: str = "postgresql+asyncpg://knot:knot_dev@localhost:5432/knot"
+    database_url: str = "sqlite+aiosqlite:///./knot.db"
     redis_url: str = "redis://localhost:6379/0"
 
     # Milvus

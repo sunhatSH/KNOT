@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Button, Spin, Typography, message, Space, Drawer, Descriptions, Tag,
+  Button, Spin, Typography, message, Space, Drawer, Descriptions, Tag, Modal, Input,
 } from 'antd';
 import {
-  PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined,
+  PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import {
   ReactFlow,
@@ -40,6 +40,9 @@ export default function WorkflowEditor() {
   const { currentWorkflow, loading, setCurrentWorkflow, setLoading } = useWorkflowStore();
   const [execution, setExecution] = useState<Execution | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [nlModalOpen, setNlModalOpen] = useState(false);
+  const [nlInput, setNlInput] = useState('');
+  const [nlGenerating, setNlGenerating] = useState(false);
 
   // Convert workflow nodes to React Flow nodes
   const initialNodes: RFNode[] = useMemo(() => {
@@ -144,6 +147,28 @@ export default function WorkflowEditor() {
     }
   };
 
+  const handleGenerateFromNL = async () => {
+    if (!nlInput.trim()) {
+      message.warning('请输入自然语言描述');
+      return;
+    }
+    setNlGenerating(true);
+    try {
+      const workflow = await workflowApi.createFromNL(nlInput.trim());
+      setCurrentWorkflow(workflow);
+      message.success('工作流生成成功');
+      setNlModalOpen(false);
+      setNlInput('');
+      if (workflow.id) {
+        navigate(`/workflows/${workflow.id}`, { replace: true });
+      }
+    } catch (e: any) {
+      message.error(`生成失败: ${e.message}`);
+    } finally {
+      setNlGenerating(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
@@ -172,6 +197,9 @@ export default function WorkflowEditor() {
           </Title>
         </Space>
         <Space>
+          <Button icon={<ThunderboltOutlined />} onClick={() => setNlModalOpen(true)}>
+            AI 生成
+          </Button>
           <Button icon={<SaveOutlined />} onClick={handleSave}>
             保存
           </Button>
@@ -200,6 +228,41 @@ export default function WorkflowEditor() {
           />
         </ReactFlow>
       </div>
+
+      {/* NL Generation Modal */}
+      <Modal
+        title="从自然语言生成工作流"
+        open={nlModalOpen}
+        onCancel={() => {
+          if (!nlGenerating) {
+            setNlModalOpen(false);
+          }
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => setNlModalOpen(false)} disabled={nlGenerating}>
+            取消
+          </Button>,
+          <Button
+            key="generate"
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            loading={nlGenerating}
+            onClick={handleGenerateFromNL}
+          >
+            生成工作流
+          </Button>,
+        ]}
+      >
+        <Spin spinning={nlGenerating}>
+          <Input.TextArea
+            rows={5}
+            value={nlInput}
+            onChange={(e) => setNlInput(e.target.value)}
+            placeholder="请输入自然语言描述，例如：搜索并分析最新的AI论文，然后生成一份总结报告"
+            disabled={nlGenerating}
+          />
+        </Spin>
+      </Modal>
 
       {/* Execution Result Drawer */}
       <Drawer

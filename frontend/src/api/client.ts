@@ -16,6 +16,9 @@ export const workflowApi = {
 
   getExecution: (id: string) =>
     client.get<Execution>(`/workflows/executions/${id}`).then(r => r.data),
+
+  createFromNL: (description: string) =>
+    client.post<Workflow>('/workflows/from-nl', { description }).then(r => r.data),
 };
 
 export const executionApi = {

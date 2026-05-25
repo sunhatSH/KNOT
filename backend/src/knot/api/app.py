@@ -11,6 +11,7 @@ from knot.api.routes import agents as agent_routes
 from knot.api.routes import knowledge as knowledge_routes
 from knot.api.routes import workflows as workflow_routes
 from knot.core.config import settings
+from knot.core.database import init_db
 from knot.execution_layer.registry import tool_registry
 from knot.execution_layer.tool_executor import CalculatorTool, EchoTool, HTTPRequestTool
 from knot.knowledge_layer.enhancer import ContextEnhancer
@@ -77,6 +78,12 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup():
         """Initialize connections on startup."""
+        try:
+            await init_db()
+            logger.info("Database tables initialized")
+        except Exception as e:
+            logger.warning("Database initialization failed: %s", e)
+
         try:
             await vector_store.connect()
             logger.info("Vector store connected")
