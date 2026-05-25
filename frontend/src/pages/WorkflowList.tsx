@@ -34,8 +34,18 @@ export default function WorkflowList() {
 
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3}>工作流</Title>
+      {/* Page header */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 24,
+        }}
+      >
+        <Title level={3} style={{ margin: 0 }}>
+          工作流
+        </Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/workflows/new')}>
           新建工作流
         </Button>
@@ -43,7 +53,36 @@ export default function WorkflowList() {
 
       <Spin spinning={loading}>
         {workflows.length === 0 ? (
-          <Empty description="暂无工作流，点击上方按钮创建" />
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '80px 24px',
+              background: '#fff',
+              borderRadius: 8,
+              border: '1px solid #e8eaf0',
+            }}
+          >
+            <div
+              style={{
+                width: 80,
+                height: 80,
+                borderRadius: 40,
+                background: '#f0f2ff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 16,
+              }}
+            >
+              <NodeIndexOutlined style={{ fontSize: 32, color: '#4f6ef7' }} />
+            </div>
+            <Text type="secondary" style={{ fontSize: 15, marginBottom: 16 }}>
+              暂无工作流，点击上方按钮创建
+            </Text>
+          </div>
         ) : (
           <Row gutter={[16, 16]}>
             {workflows.map((wf) => (
@@ -51,19 +90,32 @@ export default function WorkflowList() {
                 <Card
                   hoverable
                   onClick={() => navigate(`/workflows/${wf.id}`)}
-                  actions={[<NodeIndexOutlined key="edit" />]}
+                  style={{ borderRadius: 8, border: '1px solid #e8eaf0' }}
+                  actions={[
+                    <NodeIndexOutlined key="edit" style={{ color: '#4f6ef7' }} />,
+                  ]}
                 >
                   <Card.Meta
-                    title={wf.name}
+                    title={
+                      <span style={{ fontSize: 15, fontWeight: 600, color: '#1a1d29' }}>
+                        {wf.name}
+                      </span>
+                    }
                     description={
                       <>
-                        <Text type="secondary" ellipsis style={{ display: 'block', marginBottom: 8 }}>
+                        <Text
+                          type="secondary"
+                          ellipsis
+                          style={{ display: 'block', marginBottom: 12, fontSize: 13 }}
+                        >
                           {wf.description || '无描述'}
                         </Text>
                         <div>
-                          <Tag>{wf.nodes?.length || 0} 个节点</Tag>
+                          <Tag style={{ margin: 0 }}>{wf.nodes?.length || 0} 个节点</Tag>
                           {wf.tags?.map((t) => (
-                            <Tag key={t}>{t}</Tag>
+                            <Tag key={t} style={{ marginLeft: 4 }}>
+                              {t}
+                            </Tag>
                           ))}
                         </div>
                       </>

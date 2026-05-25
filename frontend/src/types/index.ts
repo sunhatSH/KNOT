@@ -7,6 +7,8 @@ export interface Node {
   inputs: Record<string, string>;
   outputs: Record<string, string>;
   status?: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  timeout_seconds?: number;
+  max_retries?: number;
 }
 
 export interface Edge {
@@ -29,12 +31,13 @@ export interface Workflow {
 }
 
 export interface TraceEntry {
+  timestamp: string;
   node_id: string;
-  node_type: string;
-  action?: string;
-  timestamp?: string;
-  result_summary?: string;
-  error?: string;
+  node_label?: string;
+  event: string;
+  message?: string;
+  duration_ms?: number | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Execution {

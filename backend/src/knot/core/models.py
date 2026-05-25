@@ -155,6 +155,29 @@ class Workflow(BaseModel):
         return sorted_nodes
 
 
+# ─── User / Auth ──────────────────────────────────────────────────────────
+
+
+class UserRole(str, Enum):
+    """System user roles for RBAC."""
+
+    ADMIN = "admin"
+    USER = "user"
+    VIEWER = "viewer"
+
+
+class User(BaseModel):
+    """A system user."""
+
+    id: str = Field(default_factory=lambda: f"user_{uuid.uuid4().hex[:8]}")
+    username: str
+    email: str = ""
+    role: UserRole = UserRole.USER
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.now)
+    # Note: password_hash is NOT included — it is only in the ORM model
+
+
 # ─── Agent ────────────────────────────────────────────────────────────────
 
 
@@ -185,6 +208,21 @@ class Execution(BaseModel):
     completed_at: datetime | None = None
     error: str | None = None
     trace: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# ─── Trace Entry ───────────────────────────────────────────────────────────
+
+
+class TraceEntry(BaseModel):
+    """A structured trace entry for workflow execution observability."""
+
+    timestamp: datetime = Field(default_factory=datetime.now)
+    node_id: str = ""
+    node_label: str = ""
+    event: str  # "node_start", "node_complete", "node_failed", "node_skipped", "branch", "tool_call", "knowledge_retrieval", "error", "info"
+    message: str = ""
+    duration_ms: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ─── Knowledge ────────────────────────────────────────────────────────────

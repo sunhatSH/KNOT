@@ -65,6 +65,22 @@ class AgentModel(Base):
     config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class UserModel(Base):
+    """ORM model for system users."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    username: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String, default="")
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, default="user")
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.datetime.now
+    )
+
+
 class KnowledgeBaseModel(Base):
     """ORM model for knowledge-base collections (maps to Pydantic KnowledgeBase)."""
 

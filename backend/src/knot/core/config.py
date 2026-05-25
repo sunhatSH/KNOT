@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     milvus_host: str = "localhost"
     milvus_port: int = 19530
 
+    # JWT
+    jwt_secret_key: str = "knot-dev-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 hours
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000

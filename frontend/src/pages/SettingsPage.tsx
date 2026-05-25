@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react';
-import { Alert, Button, Card, Form, Input, message, Select, Switch, Typography } from 'antd';
+import { Alert, Button, Card, Form, Input, message, Select, Switch, Typography, Space, Divider } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 const STORAGE_KEY = 'knot_settings';
 const BASE_URL = '/api/v1';
@@ -78,11 +78,22 @@ export default function SettingsPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
-      <Title level={3}>
-        <SettingOutlined style={{ marginRight: 8 }} />
-        设置
-      </Title>
-      <Card>
+      {/* Page header */}
+      <div style={{ marginBottom: 24 }}>
+        <Title level={3} style={{ margin: 0 }}>
+          设置
+        </Title>
+        <Text type="secondary" style={{ marginTop: 4, display: 'block', fontSize: 14 }}>
+          配置 LLM 连接参数以启用 AI 功能
+        </Text>
+      </div>
+
+      <Card
+        style={{
+          borderRadius: 8,
+          border: '1px solid #e8eaf0',
+        }}
+      >
         {!hasSettings && (
           <Alert
             message="尚未配置"
@@ -123,6 +134,8 @@ export default function SettingsPage() {
             <Input.Password placeholder="sk-..." />
           </Form.Item>
 
+          <Divider style={{ margin: '16px 0' }} />
+
           <Form.Item
             name="debugMode"
             label="Debug Mode"
@@ -131,13 +144,17 @@ export default function SettingsPage() {
             <Switch />
           </Form.Item>
 
+          <Divider style={{ margin: '16px 0' }} />
+
           <Form.Item style={{ marginBottom: 0 }}>
-            <Button type="primary" htmlType="submit" style={{ marginRight: 12 }}>
-              保存设置
-            </Button>
-            <Button onClick={handleTestConnection} loading={testing} disabled={testing}>
-              测试连接
-            </Button>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                保存设置
+              </Button>
+              <Button onClick={handleTestConnection} loading={testing} disabled={testing}>
+                测试连接
+              </Button>
+            </Space>
           </Form.Item>
         </Form>
       </Card>

@@ -18,6 +18,7 @@ from knot.core.models import (
     KnowledgeBase,
     Node,
     NodeStatus,
+    User,
     Workflow,
     WorkflowStatus,
 )
@@ -25,6 +26,7 @@ from knot.core.orm_models import (
     AgentModel,
     ExecutionModel,
     KnowledgeBaseModel,
+    UserModel,
     WorkflowModel,
 )
 
@@ -144,6 +146,21 @@ def _kb_from_orm(model: KnowledgeBaseModel) -> KnowledgeBase:
         collection_name=model.collection_name,
         chunk_size=model.chunk_size,
         chunk_overlap=model.chunk_overlap,
+    )
+
+
+# ─── User helpers ────────────────────────────────────────────────────────────
+
+
+def _user_from_orm(model: UserModel) -> User:
+    """Convert an ORM UserModel back to a Pydantic User (no password hash)."""
+    return User(
+        id=model.id,
+        username=model.username,
+        email=model.email,
+        role=model.role,  # UserRole enum; Pydantic coerces automatically
+        is_active=model.is_active,
+        created_at=model.created_at,
     )
 
 
@@ -317,3 +334,53 @@ class KnowledgeBaseRepository:
         result = await session.execute(stmt)
         models = result.scalars().all()
         return [_kb_from_orm(m) for m in models]
+
+
+class UserRepository:
+    """Persistence operations for User objects."""
+
+    async def save(
+        self, session: AsyncSession, user: User, password_hash: str
+    ) -> User:
+        """Persist a user with its password hash."""
+        model = UserModel(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            password_hash=password_hash,
+            role=user.role.value,
+            is_active=user.is_active,
+            created_at=user.created_at,
+        )
+        session.add(model)
+        await session.commit()
+        return user
+
+    async def get(
+        self, session: AsyncSession, user_id: str
+    ) -> User | None:
+        """Retrieve a single user by ID (no password hash returned)."""
+        model = await session.get(UserModel, user_id)
+        if model is None:
+            return None
+        return _user_from_orm(model)
+
+    async def get_by_username(
+        self, session: AsyncSession, username: str
+    ) -> tuple[User, str] | None:
+        """Retrieve a user by username, returning (User, password_hash)."""
+        result = await session.execute(
+            select(UserModel).where(UserModel.username == username)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        return _user_from_orm(model), model.password_hash
+
+    async def list(self, session: AsyncSession) -> list[User]:
+        """List all users (no password hashes returned)."""
+        result = await session.execute(
+            select(UserModel).order_by(UserModel.created_at.desc())
+        )
+        models = result.scalars().all()
+        return [_user_from_orm(m) for m in models]

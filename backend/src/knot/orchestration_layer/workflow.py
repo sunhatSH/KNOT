@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Any, Literal, TypedDict
 
@@ -13,6 +15,7 @@ from knot.core.models import (
     Node,
     NodeStatus,
     NodeType,
+    TraceEntry,
     Workflow,
     WorkflowStatus,
 )
@@ -84,13 +87,23 @@ def build_execute_node(
         logger.info("Executing node: %s (%s)", node.label or node_id, node.type.value)
         node.status = NodeStatus.RUNNING
         node.started_at = datetime.now()
+        start_time = time.monotonic()
 
-        trace_entry = {
-            "node_id": node_id,
-            "node_type": node.type.value,
-            "action": "start",
-            "timestamp": datetime.now().isoformat(),
-        }
+        # Build trace entries for this step
+        new_trace = list(state.get("trace", []))
+
+        # Node start trace
+        new_trace.append(
+            TraceEntry(
+                event="node_start",
+                node_id=node_id,
+                node_label=node.label or node_id,
+                message=f"Starting execution of node '{node.label or node_id}'",
+            ).model_dump()
+        )
+
+        # Internal trace collector for sub-operations
+        internal_trace: list[dict[str, Any]] = []
 
         try:
             result = await _execute_node_logic(
@@ -101,14 +114,29 @@ def build_execute_node(
                 scheduler=scheduler,
                 retriever=retriever,
                 enhancer=enhancer,
+                _trace_entries=internal_trace,
             )
+
+            end_time = time.monotonic()
+            duration_ms = round((end_time - start_time) * 1000, 2)
 
             node.status = NodeStatus.SUCCESS
             node.result = result
             node.completed_at = datetime.now()
 
-            trace_entry["action"] = "complete"
-            trace_entry["result_summary"] = str(result)[:200]
+            new_trace.extend(internal_trace)
+
+            # Node complete trace
+            new_trace.append(
+                TraceEntry(
+                    event="node_complete",
+                    node_id=node_id,
+                    node_label=node.label or node_id,
+                    message=f"Node '{node.label or node_id}' completed successfully",
+                    duration_ms=duration_ms,
+                    metadata={"result_summary": str(result)[:200]},
+                ).model_dump()
+            )
 
             new_node_statuses = dict(state.get("node_statuses", {}))
             new_node_statuses[node_id] = NodeStatus.SUCCESS.value
@@ -125,17 +153,31 @@ def build_execute_node(
                 "node_results": new_node_results,
                 "global_context": new_context,
                 "current_index": idx + 1,
-                "trace": state.get("trace", []) + [trace_entry],
+                "trace": new_trace,
             }
 
         except Exception as e:
+            end_time = time.monotonic()
+            duration_ms = round((end_time - start_time) * 1000, 2)
+
             node.status = NodeStatus.FAILED
             node.error = str(e)
             node.completed_at = datetime.now()
             logger.error("Node %s failed: %s", node_id, e)
 
-            trace_entry["action"] = "failed"
-            trace_entry["error"] = str(e)
+            new_trace.extend(internal_trace)
+
+            # Node failed trace
+            new_trace.append(
+                TraceEntry(
+                    event="node_failed",
+                    node_id=node_id,
+                    node_label=node.label or node_id,
+                    message=f"Node '{node.label or node_id}' failed: {e}",
+                    duration_ms=duration_ms,
+                    metadata={"error": str(e)},
+                ).model_dump()
+            )
 
             new_node_statuses = dict(state.get("node_statuses", {}))
             new_node_statuses[node_id] = NodeStatus.FAILED.value
@@ -146,14 +188,14 @@ def build_execute_node(
                 return {
                     "node_statuses": new_node_statuses,
                     "current_index": idx,  # Re-run same node
-                    "trace": state.get("trace", []) + [trace_entry],
+                    "trace": new_trace,
                 }
 
             return {
                 "status": WorkflowStatus.FAILED.value,
                 "error": str(e),
                 "node_statuses": new_node_statuses,
-                "trace": state.get("trace", []) + [trace_entry],
+                "trace": new_trace,
             }
 
     return execute_node
@@ -198,6 +240,7 @@ async def _execute_node_logic(
     scheduler: AgentScheduler,
     retriever: HybridRetriever | None,
     enhancer: ContextEnhancer | None,
+    _trace_entries: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Execute the logic for a single workflow node based on its type."""
 
@@ -240,9 +283,23 @@ async def _execute_node_logic(
                 collection_name=node.config.get("knowledge_base", "default"),
                 query=query,
             )
+            chunks_count = len(chunks)
+            if _trace_entries is not None:
+                _trace_entries.append(
+                    TraceEntry(
+                        event="knowledge_retrieval",
+                        node_id=node.id,
+                        node_label=node.label or node.id,
+                        message=f"Retrieved {chunks_count} knowledge chunk(s)",
+                        metadata={
+                            "query": query,
+                            "chunks_count": chunks_count,
+                        },
+                    ).model_dump()
+                )
             if chunks:
                 knowledge_context = enhancer.enhance(query, chunks)
-                logger.info("Enhanced node %s with %d knowledge chunks", node.id, len(chunks))
+                logger.info("Enhanced node %s with %d knowledge chunks", node.id, chunks_count)
 
         if is_multi:
             # Multi-agent execution (parallel or debate)
@@ -333,9 +390,18 @@ class WorkflowEngine:
         from langgraph.graph import END, StateGraph
 
         execution = Execution(workflow_id=workflow.id)
+        execution.started_at = datetime.now()
         order = [n.id for n in workflow.topological_sort()]
 
         logger.info("Starting workflow '%s' exec=%s nodes=%d", workflow.name, execution.id, len(order))
+
+        # Initial trace entry
+        initial_trace = [
+            TraceEntry(
+                event="info",
+                message=f"Workflow '{workflow.name}' started with {len(order)} node(s)",
+            ).model_dump()
+        ]
 
         # Build LangGraph
         graph = StateGraph(LangGraphState)
@@ -377,7 +443,7 @@ class WorkflowEngine:
             "global_context": dict(workflow.global_context),
             "status": WorkflowStatus.PENDING.value,
             "error": None,
-            "trace": [],
+            "trace": initial_trace,
         }
 
         result_state = await app.ainvoke(initial_state)
@@ -390,7 +456,16 @@ class WorkflowEngine:
         }
         execution.global_context = result_state.get("global_context", {})
         execution.error = result_state.get("error")
-        execution.trace = result_state.get("trace", [])
+
+        # Add final trace entries
+        final_trace = list(result_state.get("trace", []))
+        final_trace.append(
+            TraceEntry(
+                event="info",
+                message=f"Workflow '{workflow.name}' completed with status {execution.status.value}",
+            ).model_dump()
+        )
+        execution.trace = final_trace
         execution.completed_at = datetime.now()
 
         logger.info("Workflow '%s' completed: %s", workflow.name, execution.status.value)

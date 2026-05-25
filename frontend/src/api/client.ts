@@ -31,4 +31,13 @@ export const knowledgeApi = {
 
   search: (collectionName: string, query: string, topK = 10) =>
     client.post('/knowledge/search', null, { params: { collection_name: collectionName, query, top_k: topK } }),
+
+  uploadDocument: (collectionName: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return client.post('/knowledge/documents/upload', formData, {
+      params: { collection_name: collectionName },
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(r => r.data);
+  },
 };
