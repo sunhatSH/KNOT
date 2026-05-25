@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knot.core.database import get_session
-from knot.core.models import Execution, Workflow
+from knot.core.models import Execution, Workflow, WorkflowStatus
 from knot.core.repository import ExecutionRepository, WorkflowRepository
 from knot.llm.base import LLMProvider
 from knot.orchestration_layer.intent_understanding import nl_to_workflow
@@ -20,12 +20,17 @@ router = APIRouter(prefix="/api/v1/workflows", tags=["workflows"])
 _wf_repo = WorkflowRepository()
 _exec_repo = ExecutionRepository()
 
+# Stored by configure_routes() so control endpoints can reach it.
+_engine: WorkflowEngine | None = None
+
 
 def configure_routes(
     engine: WorkflowEngine,
     llm_provider: LLMProvider | None = None,
 ) -> None:
     """Inject the workflow engine (and optional LLM) dependency into routes."""
+    global _engine
+    _engine = engine
 
     @router.post("/from-nl")
     async def create_workflow_from_nl(
@@ -101,3 +106,65 @@ def configure_routes(
         if not exec_:
             raise HTTPException(status_code=404, detail="Execution not found")
         return exec_
+
+    # ── Execution Control Endpoints ──────────────────────────────────────
+
+    @router.post("/executions/{execution_id}/pause")
+    async def pause_execution(
+        execution_id: str,
+    ) -> Execution:
+        """Pause a running execution."""
+        assert _engine is not None
+        state = _engine._control_states.get(execution_id)
+        if state is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Running execution not found",
+            )
+        if state.status != WorkflowStatus.RUNNING:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Execution is {state.status.value}, only RUNNING executions can be paused",
+            )
+        state.request_pause()
+        return state.execution
+
+    @router.post("/executions/{execution_id}/resume")
+    async def resume_execution(
+        execution_id: str,
+    ) -> Execution:
+        """Resume a paused execution."""
+        assert _engine is not None
+        state = _engine._control_states.get(execution_id)
+        if state is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Paused execution not found",
+            )
+        if state.status != WorkflowStatus.PAUSED:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Execution is {state.status.value}, only PAUSED executions can be resumed",
+            )
+        state.request_resume()
+        return state.execution
+
+    @router.post("/executions/{execution_id}/cancel")
+    async def cancel_execution(
+        execution_id: str,
+    ) -> Execution:
+        """Cancel a running or paused execution."""
+        assert _engine is not None
+        state = _engine._control_states.get(execution_id)
+        if state is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Active execution not found",
+            )
+        if state.status not in (WorkflowStatus.RUNNING, WorkflowStatus.PAUSED):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Execution is {state.status.value}, only RUNNING or PAUSED executions can be cancelled",
+            )
+        state.request_cancel()
+        return state.execution

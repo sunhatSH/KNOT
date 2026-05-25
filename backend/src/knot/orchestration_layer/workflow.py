@@ -67,10 +67,32 @@ def build_execute_node(
     scheduler: AgentScheduler,
     retriever: HybridRetriever | None = None,
     enhancer: ContextEnhancer | None = None,
+    workflow_state: WorkflowState | None = None,
 ):
     """Create a LangGraph node function that executes the current workflow node."""
 
+    _ws = workflow_state  # Local ref for closure
+
     async def execute_node(state: LangGraphState) -> dict[str, Any]:
+        # ── Control point: before each superstep ──
+        if _ws is not None:
+            try:
+                await _ws.wait_if_paused()
+            except asyncio.CancelledError:
+                node_id = state.get("current_node_id", "")
+                new_trace = list(state.get("trace", []))
+                new_trace.append(
+                    TraceEntry(
+                        event="info",
+                        node_id=node_id,
+                        message="Workflow execution was cancelled",
+                    ).model_dump()
+                )
+                return {
+                    "status": WorkflowStatus.CANCELLED.value,
+                    "trace": new_trace,
+                }
+
         workflow = Workflow(**json.loads(state["workflow_json"]))
         order = state["execution_order"]
         idx = state["current_index"]
@@ -117,6 +139,46 @@ def build_execute_node(
                 _trace_entries=internal_trace,
             )
 
+            # ── Control point: after node execution ──
+            if _ws is not None:
+                try:
+                    await _ws.wait_if_paused()
+                except asyncio.CancelledError:
+                    # Node completed, but workflow is cancelled — record
+                    # the node result, then finish as cancelled.
+                    node.status = NodeStatus.SUCCESS
+                    node.result = result
+                    node.completed_at = datetime.now()
+
+                    new_trace.extend(internal_trace)
+                    new_trace.append(
+                        TraceEntry(
+                            event="info",
+                            node_id=node_id,
+                            node_label=node.label or node_id,
+                            message="Workflow execution was cancelled",
+                        ).model_dump()
+                    )
+
+                    new_node_statuses = dict(state.get("node_statuses", {}))
+                    new_node_statuses[node_id] = NodeStatus.SUCCESS.value
+
+                    new_node_results = dict(state.get("node_results", {}))
+                    new_node_results[node_id] = result
+
+                    new_context = dict(state.get("global_context", {}))
+                    if isinstance(result, dict):
+                        new_context.update(result)
+
+                    return {
+                        "status": WorkflowStatus.CANCELLED.value,
+                        "node_statuses": new_node_statuses,
+                        "node_results": new_node_results,
+                        "global_context": new_context,
+                        "current_index": idx + 1,
+                        "trace": new_trace,
+                    }
+
             end_time = time.monotonic()
             duration_ms = round((end_time - start_time) * 1000, 2)
 
@@ -153,6 +215,23 @@ def build_execute_node(
                 "node_results": new_node_results,
                 "global_context": new_context,
                 "current_index": idx + 1,
+                "trace": new_trace,
+            }
+
+        except asyncio.CancelledError:
+            # CancelledError raised from _execute_node_logic (unlikely but
+            # possible with external task cancellation).
+            new_trace.extend(internal_trace)
+            new_trace.append(
+                TraceEntry(
+                    event="info",
+                    node_id=node_id,
+                    node_label=node.label or node_id,
+                    message="Workflow execution was cancelled",
+                ).model_dump()
+            )
+            return {
+                "status": WorkflowStatus.CANCELLED.value,
                 "trace": new_trace,
             }
 
@@ -204,10 +283,14 @@ def build_execute_node(
 def build_route_condition():
     """Create a LangGraph router that checks execution status."""
 
-    def route_condition(state: LangGraphState) -> Literal["continue", "end", "error"]:
+    def route_condition(
+        state: LangGraphState,
+    ) -> Literal["continue", "end", "error", "cancelled"]:
         status = state.get("status", WorkflowStatus.RUNNING.value)
         if status == WorkflowStatus.FAILED.value:
             return "error"
+        if status == WorkflowStatus.CANCELLED.value:
+            return "cancelled"
         idx = state.get("current_index", 0)
         order = state.get("execution_order", [])
         if idx >= len(order):
@@ -384,6 +467,10 @@ class WorkflowEngine:
         self._scheduler = scheduler
         self._retriever = retriever
         self._enhancer = enhancer
+        # Map execution_id -> WorkflowState for in-flight executions.
+        # Control API endpoints (pause/resume/cancel) look up the state
+        # from this dict to signal the running task.
+        self._control_states: dict[str, WorkflowState] = {}
 
     async def execute(self, workflow: Workflow) -> Execution:
         """Execute a workflow and return the execution result."""
@@ -403,70 +490,90 @@ class WorkflowEngine:
             ).model_dump()
         ]
 
-        # Build LangGraph
-        graph = StateGraph(LangGraphState)
+        # ── Create and register WorkflowState for control API ──
+        workflow_state = WorkflowState(execution)
+        self._control_states[execution.id] = workflow_state
 
-        graph.add_node("init", build_init_state)
-        graph.add_node("execute", build_execute_node(
-            llm_provider=self._llm_provider,
-            scheduler=self._scheduler,
-            retriever=self._retriever,
-            enhancer=self._enhancer,
-        ))
-        graph.add_node("finalize", build_finalize())
+        try:
+            # Build LangGraph
+            graph = StateGraph(LangGraphState)
 
-        graph.set_entry_point("init")
-        graph.add_edge("init", "execute")
+            graph.add_node("init", build_init_state)
+            graph.add_node("execute", build_execute_node(
+                llm_provider=self._llm_provider,
+                scheduler=self._scheduler,
+                retriever=self._retriever,
+                enhancer=self._enhancer,
+                workflow_state=workflow_state,
+            ))
+            graph.add_node("finalize", build_finalize())
 
-        graph.add_conditional_edges(
-            "execute",
-            build_route_condition(),
-            {
-                "continue": "execute",
-                "end": "finalize",
-                "error": "finalize",
-            },
-        )
-        graph.add_edge("finalize", END)
+            graph.set_entry_point("init")
+            graph.add_edge("init", "execute")
 
-        app = graph.compile()
+            graph.add_conditional_edges(
+                "execute",
+                build_route_condition(),
+                {
+                    "continue": "execute",
+                    "end": "finalize",
+                    "error": "finalize",
+                    "cancelled": END,
+                },
+            )
+            graph.add_edge("finalize", END)
 
-        # Run
-        initial_state: LangGraphState = {
-            "workflow_json": workflow.model_dump_json(),
-            "execution_id": execution.id,
-            "current_node_id": None,
-            "execution_order": order,
-            "current_index": 0,
-            "node_statuses": {},
-            "node_results": {},
-            "global_context": dict(workflow.global_context),
-            "status": WorkflowStatus.PENDING.value,
-            "error": None,
-            "trace": initial_trace,
-        }
+            app = graph.compile()
 
-        result_state = await app.ainvoke(initial_state)
+            # Run
+            initial_state: LangGraphState = {
+                "workflow_json": workflow.model_dump_json(),
+                "execution_id": execution.id,
+                "current_node_id": None,
+                "execution_order": order,
+                "current_index": 0,
+                "node_statuses": {},
+                "node_results": {},
+                "global_context": dict(workflow.global_context),
+                "status": WorkflowStatus.PENDING.value,
+                "error": None,
+                "trace": initial_trace,
+            }
 
-        # Map result back to Execution model
-        execution.status = WorkflowStatus(result_state.get("status", WorkflowStatus.FAILED.value))
-        execution.node_states = {
-            k: NodeStatus(v) if isinstance(v, str) else v
-            for k, v in result_state.get("node_statuses", {}).items()
-        }
-        execution.global_context = result_state.get("global_context", {})
-        execution.error = result_state.get("error")
+            result_state = await app.ainvoke(initial_state)
 
-        # Add final trace entries
-        final_trace = list(result_state.get("trace", []))
-        final_trace.append(
-            TraceEntry(
-                event="info",
-                message=f"Workflow '{workflow.name}' completed with status {execution.status.value}",
-            ).model_dump()
-        )
-        execution.trace = final_trace
-        execution.completed_at = datetime.now()
+            # Map result back to Execution model
+            execution.status = WorkflowStatus(
+                result_state.get("status", WorkflowStatus.FAILED.value)
+            )
+            execution.node_states = {
+                k: NodeStatus(v) if isinstance(v, str) else v
+                for k, v in result_state.get("node_statuses", {}).items()
+            }
+            execution.global_context = result_state.get("global_context", {})
+            execution.error = result_state.get("error")
 
-        logger.info("Workflow '%s' completed: %s", workflow.name, execution.status.value)
-        return execution
+            # When cancelled, mark any remaining pending nodes as SKIPPED
+            if execution.status == WorkflowStatus.CANCELLED:
+                for node_id in order:
+                    if node_id not in execution.node_states:
+                        execution.node_states[node_id] = NodeStatus.SKIPPED
+
+            # Add final trace entries
+            final_trace = list(result_state.get("trace", []))
+            final_trace.append(
+                TraceEntry(
+                    event="info",
+                    message=f"Workflow '{workflow.name}' completed with status {execution.status.value}",
+                ).model_dump()
+            )
+            execution.trace = final_trace
+            execution.completed_at = datetime.now()
+
+            logger.info(
+                "Workflow '%s' completed: %s", workflow.name, execution.status.value
+            )
+            return execution
+
+        finally:
+            self._control_states.pop(execution.id, None)

@@ -23,6 +23,9 @@ export const workflowApi = {
 
 export const executionApi = {
   get: (id: string) => client.get<Execution>(`/workflows/executions/${id}`).then(r => r.data),
+  pause: (id: string) => client.post<Execution>(`/workflows/executions/${id}/pause`).then(r => r.data),
+  resume: (id: string) => client.post<Execution>(`/workflows/executions/${id}/resume`).then(r => r.data),
+  cancel: (id: string) => client.post<Execution>(`/workflows/executions/${id}/cancel`).then(r => r.data),
 };
 
 export const knowledgeApi = {

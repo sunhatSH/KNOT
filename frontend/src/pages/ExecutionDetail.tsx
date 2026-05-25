@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Card, Spin, Tag, Typography, Timeline, Empty, Button, Descriptions, Collapse, Statistic, Row, Col,
+  Card, Spin, Tag, Typography, Timeline, Empty, Button, Descriptions,
+  Collapse, Statistic, Row, Col, message,
 } from 'antd';
 import {
   ArrowLeftOutlined, LoadingOutlined,
-  PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined,
+  PauseCircleOutlined, PlayCircleOutlined, StopOutlined,
+  CheckCircleOutlined, CloseCircleOutlined,
   MinusCircleOutlined, ToolOutlined, DatabaseOutlined, InfoCircleOutlined,
 } from '@ant-design/icons';
 
@@ -206,6 +208,55 @@ export default function ExecutionDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [pausing, setPausing] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  const handlePause = () => {
+    if (!id) return;
+    setPausing(true);
+    executionApi
+      .pause(id)
+      .then((data) => {
+        setExecution(data);
+        message.success('执行已暂停');
+      })
+      .catch((err) => {
+        message.error(err.response?.data?.detail || err.message || '暂停执行失败');
+      })
+      .finally(() => setPausing(false));
+  };
+
+  const handleResume = () => {
+    if (!id) return;
+    setResuming(true);
+    executionApi
+      .resume(id)
+      .then((data) => {
+        setExecution(data);
+        message.success('执行已恢复');
+      })
+      .catch((err) => {
+        message.error(err.response?.data?.detail || err.message || '恢复执行失败');
+      })
+      .finally(() => setResuming(false));
+  };
+
+  const handleCancel = () => {
+    if (!id) return;
+    setCancelling(true);
+    executionApi
+      .cancel(id)
+      .then((data) => {
+        setExecution(data);
+        message.success('执行已终止');
+      })
+      .catch((err) => {
+        message.error(err.response?.data?.detail || err.message || '终止执行失败');
+      })
+      .finally(() => setCancelling(false));
+  };
+
   useEffect(() => {
     if (!id) {
       setError('执行 ID 不能为空');
@@ -314,6 +365,47 @@ export default function ExecutionDetail() {
         <Title level={4} style={{ margin: 0 }}>
           执行详情
         </Title>
+
+        {/* Control buttons based on execution status */}
+        <div style={{ flex: 1 }} />
+        {execution.status === 'running' && (
+          <>
+            <Button
+              icon={<PauseCircleOutlined />}
+              loading={pausing}
+              onClick={handlePause}
+            >
+              暂停
+            </Button>
+            <Button
+              icon={<StopOutlined />}
+              danger
+              loading={cancelling}
+              onClick={handleCancel}
+            >
+              终止
+            </Button>
+          </>
+        )}
+        {execution.status === 'paused' && (
+          <>
+            <Button
+              icon={<PlayCircleOutlined />}
+              loading={resuming}
+              onClick={handleResume}
+            >
+              恢复
+            </Button>
+            <Button
+              icon={<StopOutlined />}
+              danger
+              loading={cancelling}
+              onClick={handleCancel}
+            >
+              终止
+            </Button>
+          </>
+        )}
       </div>
 
       {/* ---- Statistics Summary Card ---- */}
