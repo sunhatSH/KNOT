@@ -47,6 +47,10 @@ def create_app() -> FastAPI:
     llm = registry.get()
 
     scheduler = AgentScheduler()
+    # Register default multi-agent team
+    scheduler.register_default_agents()
+    logger.info("Registered %d default agents", len(scheduler.list_agents()))
+
     retriever = HybridRetriever(registry)
     enhancer = ContextEnhancer()
 

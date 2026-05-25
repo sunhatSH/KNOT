@@ -59,8 +59,18 @@ class AgentRole(str, Enum):
 
     PLANNER = "planner"
     EXECUTOR = "executor"
+    RESEARCHER = "researcher"
+    CODER = "coder"
     VALIDATOR = "validator"
     SUMMARIZER = "summarizer"
+
+
+class MultiAgentMode(str, Enum):
+    """Multi-agent collaboration mode for a workflow node."""
+
+    SINGLE = "single"          # One agent executes (default)
+    PARALLEL = "parallel"      # Multiple agents execute independently, merge results
+    DEBATE = "debate"          # Multiple agents discuss iteratively until consensus
 
 
 # ─── Core Data Models ─────────────────────────────────────────────────────

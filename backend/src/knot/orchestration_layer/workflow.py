@@ -20,6 +20,7 @@ from knot.knowledge_layer.enhancer import ContextEnhancer
 from knot.knowledge_layer.retriever import HybridRetriever
 from knot.llm import LLMProvider
 from knot.llm.base import LLMMessage
+from knot.orchestration_layer.multi_agent import dispatch_multi_agent
 from knot.orchestration_layer.scheduler import AgentScheduler
 from knot.orchestration_layer.state import WorkflowState
 
@@ -221,12 +222,18 @@ async def _execute_node_logic(
         return {"condition_met": result_text.startswith("true") or result_text.startswith("yes")}
 
     if node.type == NodeType.TASK:
-        agent = await scheduler.assign_node(node, context)
-        agent_prompt = agent.system_prompt if agent else "You are a helpful AI assistant."
+        # Determine multi-agent mode from node config
+        from knot.core.models import MultiAgentMode
+
+        mode = MultiAgentMode(node.config.get("multi_agent_mode", "single"))
+        is_multi = mode in (MultiAgentMode.PARALLEL, MultiAgentMode.DEBATE)
 
         input_data = {k: context.get(v, v) for k, v in node.inputs.items()}
-        knowledge_context = ""
+        task_description = node.label or "Execute task"
+        task_input = json.dumps({"input": input_data, "context": context}, ensure_ascii=False)
 
+        # Knowledge enhancement
+        knowledge_context = ""
         if retriever and enhancer and node.config.get("knowledge_enabled", True):
             query = str(input_data.get("query", input_data.get("input", "")))
             chunks = await retriever.retrieve(
@@ -237,6 +244,29 @@ async def _execute_node_logic(
                 knowledge_context = enhancer.enhance(query, chunks)
                 logger.info("Enhanced node %s with %d knowledge chunks", node.id, len(chunks))
 
+        if is_multi:
+            # Multi-agent execution (parallel or debate)
+            team = await scheduler.assign_team(node, context)
+            if len(team) < 2:
+                logger.warning("Multi-agent mode %s needs ≥2 agents, got %d. Falling back to single.", mode, len(team))
+
+            full_task = f"{task_description}\nInput: {task_input}"
+            if knowledge_context:
+                full_task = f"{full_task}\n\nBackground knowledge:\n{knowledge_context}"
+
+            result = await dispatch_multi_agent(
+                mode=mode,
+                task=full_task,
+                agents=team if len(team) >= 2 else [team[0]] if team else [],
+                context=context,
+                llm_provider=llm_provider,
+                config=node.config,
+            )
+            return {**input_data, **result}
+
+        # Single agent execution
+        agent = await scheduler.assign_node(node, context)
+        agent_prompt = agent.system_prompt if agent else "You are a helpful AI assistant."
         system_content = agent_prompt
         if knowledge_context:
             system_content = f"{agent_prompt}\n\n{knowledge_context}"
@@ -245,11 +275,10 @@ async def _execute_node_logic(
             LLMMessage(role="system", content=system_content),
             LLMMessage(
                 role="user",
-                content=f"Task: {node.label}\nInput: {json.dumps(input_data, ensure_ascii=False)}\n"
-                f"Context: {json.dumps(context, ensure_ascii=False)}",
+                content=f"Task: {task_description}\nInput: {task_input}",
             ),
         ]
-        response = await llm_provider.chat(messages)
+        response = await llm_provider.chat(messages, model=agent.model if agent else None)
         return {"output": response.content, **input_data}
 
     if node.type == NodeType.LOOP:
