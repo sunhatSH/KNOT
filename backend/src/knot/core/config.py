@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+
+# Locate .env: search up from this file's directory for the project root
+_HERE = Path(__file__).resolve().parent
+_PROJECT_ROOT = _HERE.parent.parent.parent.parent.parent  # knot/core/ -> src/ -> backend/ -> KNOT/
+_ENV_FILE = _PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -26,7 +35,11 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": str(_ENV_FILE) if _ENV_FILE.exists() else ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
 settings = Settings()

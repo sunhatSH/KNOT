@@ -7,6 +7,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from knot.core.models import Execution, Workflow
+from knot.llm.base import LLMProvider
+from knot.orchestration_layer.intent_understanding import nl_to_workflow
 from knot.orchestration_layer.workflow import WorkflowEngine
 
 router = APIRouter(prefix="/api/v1/workflows", tags=["workflows"])
@@ -17,8 +19,29 @@ _workflows: dict[str, Workflow] = {}
 _executions: dict[str, Execution] = {}
 
 
-def configure_routes(engine: WorkflowEngine) -> None:
-    """Inject the workflow engine dependency into routes."""
+def configure_routes(
+    engine: WorkflowEngine,
+    llm_provider: LLMProvider | None = None,
+) -> None:
+    """Inject the workflow engine (and optional LLM) dependency into routes."""
+
+    @router.post("/from-nl")
+    async def create_workflow_from_nl(request: dict[str, str]) -> Workflow:
+        """Create a workflow from a natural language description."""
+        if llm_provider is None:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM provider not available for NL→Workflow conversion",
+            )
+        description = request.get("description", "")
+        if not description:
+            raise HTTPException(
+                status_code=422,
+                detail="'description' field is required",
+            )
+        workflow = await nl_to_workflow(description, llm_provider)
+        _workflows[workflow.id] = workflow
+        return workflow
 
     @router.post("")
     async def create_workflow(workflow: Workflow) -> Workflow:
@@ -40,7 +63,9 @@ def configure_routes(engine: WorkflowEngine) -> None:
         return wf
 
     @router.post("/{workflow_id}/execute")
-    async def execute_workflow(workflow_id: str, context: dict[str, Any] = {}) -> Execution:
+    async def execute_workflow(
+        workflow_id: str, context: dict[str, Any] = {}
+    ) -> Execution:
         """Execute a workflow."""
         wf = _workflows.get(workflow_id)
         if not wf:

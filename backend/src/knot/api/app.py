@@ -16,8 +16,7 @@ from knot.execution_layer.tool_executor import CalculatorTool, EchoTool, HTTPReq
 from knot.knowledge_layer.enhancer import ContextEnhancer
 from knot.knowledge_layer.retriever import HybridRetriever
 from knot.knowledge_layer.vector_store import vector_store
-from knot.llm import ProviderRegistry
-from knot.llm.registry import init_default_providers
+from knot.llm.registry import init_default_providers, registry as llm_registry
 from knot.orchestration_layer.scheduler import AgentScheduler
 from knot.orchestration_layer.workflow import WorkflowEngine
 
@@ -41,17 +40,16 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Initialize components
+    # Initialize components (uses global registry singleton)
     init_default_providers()
-    registry = ProviderRegistry()
-    llm = registry.get()
+    llm = llm_registry.get()
 
     scheduler = AgentScheduler()
     # Register default multi-agent team
     scheduler.register_default_agents()
     logger.info("Registered %d default agents", len(scheduler.list_agents()))
 
-    retriever = HybridRetriever(registry)
+    retriever = HybridRetriever(llm_registry)
     enhancer = ContextEnhancer()
 
     engine = WorkflowEngine(
@@ -67,7 +65,7 @@ def create_app() -> FastAPI:
     tool_registry.register(HTTPRequestTool())
 
     # Configure routes with dependencies
-    workflow_routes.configure_routes(engine)
+    workflow_routes.configure_routes(engine, llm_provider=llm)
     agent_routes.configure_routes(scheduler)
     knowledge_routes.configure_routes(retriever)
 
