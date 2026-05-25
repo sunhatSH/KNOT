@@ -13,8 +13,15 @@ from knot.api.routes import knowledge as knowledge_routes
 from knot.api.routes import workflows as workflow_routes
 from knot.core.config import settings
 from knot.core.database import init_db
+from knot.execution_layer.plugin import PluginLoader
 from knot.execution_layer.registry import tool_registry
-from knot.execution_layer.tool_executor import CalculatorTool, EchoTool, HTTPRequestTool
+from knot.execution_layer.tool_executor import (
+    CalculatorTool,
+    DatabaseTool,
+    EchoTool,
+    HTTPRequestTool,
+    ScriptTool,
+)
 from knot.knowledge_layer.enhancer import ContextEnhancer
 from knot.knowledge_layer.retriever import HybridRetriever
 from knot.knowledge_layer.vector_store import vector_store
@@ -65,6 +72,11 @@ def create_app() -> FastAPI:
     tool_registry.register(EchoTool())
     tool_registry.register(CalculatorTool())
     tool_registry.register(HTTPRequestTool())
+    tool_registry.register(DatabaseTool())
+    tool_registry.register(ScriptTool())
+
+    # Initialize plugin loader for external tools
+    plugin_loader = PluginLoader(plugin_dirs=["plugins/"])
 
     # Configure routes with dependencies
     workflow_routes.configure_routes(engine, llm_provider=llm)

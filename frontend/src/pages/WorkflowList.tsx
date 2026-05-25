@@ -4,6 +4,7 @@ import { Button, Card, Col, Row, Spin, Tag, Typography, Empty } from 'antd';
 import { PlusOutlined, NodeIndexOutlined } from '@ant-design/icons';
 import { workflowApi } from '@/api/client';
 import { useWorkflowStore } from '@/store/workflowStore';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 const { Title, Text } = Typography;
 
@@ -17,6 +18,7 @@ const statusColors: Record<string, string> = {
 export default function WorkflowList() {
   const navigate = useNavigate();
   const { workflows, loading, setWorkflows, setLoading } = useWorkflowStore();
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   const loadWorkflows = async () => {
     setLoading(true);
@@ -33,7 +35,7 @@ export default function WorkflowList() {
   }, []);
 
   return (
-    <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? 12 : 24, maxWidth: 1200, margin: '0 auto' }}>
       {/* Page header */}
       <div
         style={{

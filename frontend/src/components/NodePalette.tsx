@@ -26,7 +26,11 @@ const paletteItems: Array<{
   { type: 'output', label: '输出节点', icon: <ExportOutlined />, bg: '#f6ffed', border: '#b7eb8f', color: '#52c41a' },
 ];
 
-export default function NodePalette() {
+interface NodePaletteProps {
+  compact?: boolean;
+}
+
+export default function NodePalette({ compact }: NodePaletteProps) {
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
     event.dataTransfer.setData('application/reactflow', nodeType);
     event.dataTransfer.effectAllowed = 'move';
@@ -35,18 +39,18 @@ export default function NodePalette() {
   return (
     <div
       style={{
-        width: 180,
-        borderRight: '1px solid #f0f0f0',
-        background: '#fafafa',
-        padding: '12px 8px',
+        width: compact ? 140 : 180,
+        borderRight: '1px solid var(--border-color, #f0f0f0)',
+        background: 'var(--bg-card, #fafafa)',
+        padding: compact ? '10px 6px' : '12px 8px',
         overflowY: 'auto',
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
-        gap: 4,
+        gap: compact ? 3 : 4,
       }}
     >
-      <Text strong style={{ fontSize: 13, padding: '0 4px 4px', color: '#333' }}>
+      <Text strong style={{ fontSize: compact ? 11 : 13, padding: '0 4px 4px', color: 'var(--text-primary, #333)' }}>
         节点类型
       </Text>
       {paletteItems.map((item) => (
@@ -57,8 +61,8 @@ export default function NodePalette() {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
-            padding: '8px 10px',
+            gap: compact ? 4 : 8,
+            padding: compact ? '6px 8px' : '8px 10px',
             borderRadius: 6,
             cursor: 'grab',
             background: item.bg,
@@ -75,10 +79,10 @@ export default function NodePalette() {
             e.currentTarget.style.transform = 'none';
           }}
         >
-          <span style={{ color: item.color, fontSize: 15, display: 'flex', alignItems: 'center' }}>
+          <span style={{ color: item.color, fontSize: compact ? 13 : 15, display: 'flex', alignItems: 'center' }}>
             {item.icon}
           </span>
-          <Text style={{ fontSize: 12, lineHeight: '20px' }}>{item.label}</Text>
+          {!compact && <Text style={{ fontSize: 12, lineHeight: '20px' }}>{item.label}</Text>}
         </div>
       ))}
     </div>

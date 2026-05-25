@@ -1,10 +1,13 @@
-import { Layout, Menu } from 'antd';
+import { Layout, Menu, Button } from 'antd';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   NodeIndexOutlined,
   DatabaseOutlined,
   SettingOutlined,
+  SunOutlined,
+  MoonOutlined,
 } from '@ant-design/icons';
+import { useThemeStore } from '@/store/themeStore';
 
 const { Header } = Layout;
 
@@ -29,6 +32,7 @@ const menuItems = [
 export default function AppHeader() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { mode, toggle } = useThemeStore();
 
   const selectedKey = location.pathname.startsWith('/workflows')
     ? '/workflows'
@@ -39,8 +43,8 @@ export default function AppHeader() {
       style={{
         display: 'flex',
         alignItems: 'center',
-        background: '#fff',
-        borderBottom: '1px solid #e8eaf0',
+        background: 'var(--bg-card)',
+        borderBottom: '1px solid var(--border-color)',
         height: 56,
         padding: '0 24px',
         position: 'sticky',
@@ -75,6 +79,14 @@ export default function AppHeader() {
           borderBottom: 'none',
           background: 'transparent',
         }}
+      />
+
+      {/* Theme toggle */}
+      <Button
+        type="text"
+        icon={mode === 'light' ? <MoonOutlined /> : <SunOutlined />}
+        onClick={() => toggle()}
+        style={{ color: 'var(--text-secondary, #5a6170)' }}
       />
     </Header>
   );

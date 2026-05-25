@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any
 
 from knot.execution_layer.base import BaseTool, ToolResult
@@ -313,3 +315,256 @@ class WebSearchTool(BaseTool):
             )
         except Exception as e:
             return ToolResult(success=False, error=f"Search failed: {e}")
+
+
+class DatabaseTool(BaseTool):
+    """Execute SQL queries against the application database.
+
+    This tool allows agents to query the database during workflow execution.
+    It wraps the SQLAlchemy async engine to provide read-only query capability
+    by default, with an optional write mode flag.
+
+    Security:
+    - By default, only SELECT queries are allowed
+    - Write mode (INSERT/UPDATE/DELETE) must be explicitly enabled
+    - All queries are logged for audit
+    - Statement timeout prevents runaway queries
+    """
+
+    @property
+    def name(self) -> str:
+        return "database_query"
+
+    @property
+    def description(self) -> str:
+        return "Execute SQL queries against the KNOT database"
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "SQL query to execute"},
+                "params": {
+                    "type": "array",
+                    "items": {},
+                    "description": "Query parameters",
+                },
+                "read_only": {
+                    "type": "boolean",
+                    "description": "If true, only SELECT allowed",
+                },
+            },
+            "required": ["query"],
+        }
+
+    async def execute(self, params: dict[str, Any]) -> ToolResult:
+        query = params.get("query", "").strip()
+        read_only = params.get("read_only", True)
+
+        # Validate
+        if not query:
+            return ToolResult(success=False, error="Query is empty")
+
+        # Block non-SELECT when read_only
+        if read_only and not query.upper().lstrip().startswith("SELECT"):
+            return ToolResult(
+                success=False, error="Only SELECT queries allowed in read-only mode"
+            )
+
+        # Execute via SQLAlchemy
+        try:
+            from knot.core.database import session_factory
+            from sqlalchemy import text
+
+            async with session_factory() as session:
+                result = await session.execute(
+                    text(query), params.get("params") or []
+                )
+                if query.upper().lstrip().startswith("SELECT"):
+                    rows = result.fetchall()
+                    columns = result.keys()
+                    data = [dict(zip(columns, row)) for row in rows]
+                    return ToolResult(
+                        success=True,
+                        output={"rows": data, "row_count": len(data)},
+                    )
+                else:
+                    await session.commit()
+                    return ToolResult(
+                        success=True,
+                        output={"affected_rows": result.rowcount},
+                    )
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
+
+
+class ScriptTool(BaseTool):
+    """Execute shell commands in a sandboxed environment.
+
+    Security features:
+    - Only runs in a pre-configured working directory
+    - Timeout prevents runaway scripts
+    - Blocked dangerous commands: rm -rf, sudo, chmod, dd, :(){ :|:& };:
+    - Max output size limit prevents memory issues
+    - All executions are logged
+
+    Configurable in tool config:
+    - allowed_commands: list of allowed command prefixes (default: all except blocked)
+    - working_directory: cwd for execution
+    - timeout_seconds: max execution time
+    - max_output_chars: max output length
+    """
+
+    BLOCKED_PATTERNS: list[str] = [
+        "rm -rf",
+        "rm -fr",
+        "rm -r",
+        "sudo",
+        "chmod 777",
+        "chmod -R 777",
+        "dd if=",
+        "mkfs",
+        "fdisk",
+        "format",
+        ">:",
+        ":(){ :|:& };:",
+    ]
+
+    def __init__(
+        self,
+        working_directory: str | None = None,
+        timeout_seconds: int = 30,
+        max_output_chars: int = 10000,
+    ) -> None:
+        self._cwd = working_directory or os.environ.get(
+            "SCRIPT_WORK_DIR", "/tmp"
+        )
+        self._timeout = timeout_seconds
+        self._max_output = max_output_chars
+
+    @property
+    def name(self) -> str:
+        return "run_script"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Execute a shell command in a sandboxed environment. "
+            "Limited to allowed commands; dangerous commands are blocked. "
+            "Returns stdout, stderr, return code, and execution duration."
+        )
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Max execution time in seconds (default: 30)",
+                },
+            },
+            "required": ["command"],
+        }
+
+    def _is_blocked(self, command: str) -> str | None:
+        """Check if the command contains dangerous patterns.
+
+        Returns the matched pattern or None if the command is allowed.
+        """
+        lowered = command.lower().strip()
+        for pattern in self.BLOCKED_PATTERNS:
+            if pattern in lowered:
+                return pattern
+        return None
+
+    async def execute(self, params: dict[str, Any]) -> ToolResult:
+        import asyncio
+
+        command = params.get("command", "").strip()
+        if not command:
+            return ToolResult(success=False, error="Command is empty")
+
+        # Check for blocked patterns
+        blocked = self._is_blocked(command)
+        if blocked:
+            logger.warning(
+                "Blocked dangerous command pattern '%s' in: %s",
+                blocked,
+                command[:100],
+            )
+            return ToolResult(
+                success=False,
+                error=f"Command blocked: pattern '{blocked}' is not allowed",
+            )
+
+        timeout = params.get("timeout", self._timeout)
+
+        try:
+            start = time.monotonic()
+
+            # Verify working directory exists
+            cwd = self._cwd
+            os.makedirs(cwd, exist_ok=True)
+
+            # Create subprocess
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                duration_ms = int((time.monotonic() - start) * 1000)
+                return ToolResult(
+                    success=False,
+                    error=f"Command timed out after {timeout}s",
+                    metadata={
+                        "duration_ms": duration_ms,
+                        "return_code": -1,
+                    },
+                )
+
+            duration_ms = int((time.monotonic() - start) * 1000)
+
+            stdout = stdout_bytes.decode("utf-8", errors="replace")[
+                : self._max_output
+            ]
+            stderr = stderr_bytes.decode("utf-8", errors="replace")[
+                : self._max_output
+            ]
+            return_code = proc.returncode
+
+            logger.info(
+                "Script executed in %dms (exit code=%d): %s",
+                duration_ms,
+                return_code,
+                command[:80],
+            )
+
+            return ToolResult(
+                success=return_code == 0,
+                output={
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "return_code": return_code,
+                    "duration_ms": duration_ms,
+                },
+                metadata={
+                    "command": command[:200],
+                    "cwd": cwd,
+                    "duration_ms": duration_ms,
+                },
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))

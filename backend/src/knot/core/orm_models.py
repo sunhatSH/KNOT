@@ -98,3 +98,22 @@ class KnowledgeBaseModel(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.datetime.now
     )
+
+
+class ConversationSessionModel(Base):
+    """ORM model for persisted conversation sessions."""
+
+    __tablename__ = "conversation_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(String, default="")
+    execution_id: Mapped[str] = mapped_column(String, default="")
+    turns_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    turn_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.datetime.now
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.datetime.now, onupdate=datetime.datetime.now
+    )

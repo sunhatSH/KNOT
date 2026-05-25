@@ -263,3 +263,30 @@ class ToolDefinition(BaseModel):
     input_schema: dict[str, Any] = Field(default_factory=dict)
     output_schema: dict[str, Any] = Field(default_factory=dict)
     config: dict[str, Any] = Field(default_factory=dict)
+
+
+# ─── Conversation Memory ──────────────────────────────────────────────────
+
+
+class ConversationTurn(BaseModel):
+    """A single turn in a conversation history."""
+
+    id: str = Field(default_factory=lambda: f"turn_{uuid.uuid4().hex[:8]}")
+    role: str  # "user" | "assistant" | "system" | "tool"
+    content: str
+    timestamp: datetime = Field(default_factory=datetime.now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    token_count: int = 0
+
+
+class ConversationSession(BaseModel):
+    """A conversation session with history."""
+
+    id: str = Field(default_factory=lambda: f"conv_{uuid.uuid4().hex[:8]}")
+    workflow_id: str = ""
+    execution_id: str = ""
+    turns: list[ConversationTurn] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    summary: str = ""  # Compressed summary of older turns
+    turn_count: int = 0

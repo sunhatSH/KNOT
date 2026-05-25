@@ -9,6 +9,7 @@ import {
   UploadOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
 import { knowledgeApi } from '@/api/client';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 const { Title, Text, Paragraph } = Typography;
 const { Dragger } = Upload;
@@ -48,6 +49,7 @@ export default function KnowledgePage() {
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   // Create modal
   const [createOpen, setCreateOpen] = useState(false);
@@ -228,7 +230,7 @@ export default function KnowledgePage() {
   ];
 
   return (
-    <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? 12 : 24, maxWidth: 1200, margin: '0 auto' }}>
       {/* Page header */}
       <div
         style={{

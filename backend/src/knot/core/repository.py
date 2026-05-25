@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from knot.core.models import (
     Agent,
+    ConversationSession,
+    ConversationTurn,
     Edge,
     Execution,
     KnowledgeBase,
@@ -24,6 +26,7 @@ from knot.core.models import (
 )
 from knot.core.orm_models import (
     AgentModel,
+    ConversationSessionModel,
     ExecutionModel,
     KnowledgeBaseModel,
     UserModel,
@@ -384,3 +387,80 @@ class UserRepository:
         )
         models = result.scalars().all()
         return [_user_from_orm(m) for m in models]
+
+
+# ─── Conversation serialisation helpers ──────────────────────────────────────
+
+
+def _conv_session_to_orm(session: ConversationSession) -> ConversationSessionModel:
+    """Convert a Pydantic ConversationSession to an ORM ConversationSessionModel."""
+    return ConversationSessionModel(
+        id=session.id,
+        workflow_id=session.workflow_id,
+        execution_id=session.execution_id,
+        turns_json=[t.model_dump() for t in session.turns],
+        summary=session.summary,
+        turn_count=session.turn_count,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
+
+
+def _conv_session_from_orm(model: ConversationSessionModel) -> ConversationSession:
+    """Convert an ORM ConversationSessionModel back to a Pydantic ConversationSession."""
+    return ConversationSession(
+        id=model.id,
+        workflow_id=model.workflow_id,
+        execution_id=model.execution_id,
+        turns=[ConversationTurn(**t) for t in (model.turns_json or [])],
+        summary=model.summary,
+        turn_count=model.turn_count,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+# ─── Conversation Repository ─────────────────────────────────────────────
+
+
+class ConversationRepository:
+    """Persistence operations for ConversationSession objects."""
+
+    async def save(
+        self, session: AsyncSession, conv: ConversationSession
+    ) -> ConversationSession:
+        """Persist a conversation session (insert if new, update if existing)."""
+        model = _conv_session_to_orm(conv)
+        await session.merge(model)
+        await session.commit()
+        return conv
+
+    async def get(
+        self, session: AsyncSession, conv_id: str
+    ) -> ConversationSession | None:
+        """Retrieve a single conversation session by ID."""
+        model = await session.get(ConversationSessionModel, conv_id)
+        if model is None:
+            return None
+        return _conv_session_from_orm(model)
+
+    async def list(self, session: AsyncSession) -> list[ConversationSession]:
+        """List all conversation sessions, most recently updated first."""
+        result = await session.execute(
+            select(ConversationSessionModel).order_by(
+                ConversationSessionModel.updated_at.desc()
+            )
+        )
+        models = result.scalars().all()
+        return [_conv_session_from_orm(m) for m in models]
+
+    async def delete(
+        self, session: AsyncSession, conv_id: str
+    ) -> bool:
+        """Delete a conversation session by ID. Returns True if deleted, False if not found."""
+        model = await session.get(ConversationSessionModel, conv_id)
+        if model is None:
+            return False
+        await session.delete(model)
+        await session.commit()
+        return True

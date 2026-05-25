@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Alert, Button, Card, Form, Input, message, Select, Switch, Typography, Space, Divider } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 const { Title, Text } = Typography;
 
@@ -48,6 +49,7 @@ function saveSettings(values: SettingsValues) {
 export default function SettingsPage() {
   const [form] = Form.useForm();
   const [testing, setTesting] = useState(false);
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   const initialValues = loadSettings();
   const hasSettings = !!(initialValues.apiBaseUrl || initialValues.apiKey);
@@ -77,7 +79,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+    <div style={{ padding: isMobile ? 12 : 24, maxWidth: 800, margin: '0 auto' }}>
       {/* Page header */}
       <div style={{ marginBottom: 24 }}>
         <Title level={3} style={{ margin: 0 }}>

@@ -6,7 +6,9 @@ import {
 } from 'antd';
 import {
   PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, ThunderboltOutlined,
+  MenuOutlined, CloseOutlined,
 } from '@ant-design/icons';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import {
   ReactFlow,
   Background,
@@ -50,6 +52,18 @@ export default function WorkflowEditor() {
   const [nlInput, setNlInput] = useState('');
   const [nlGenerating, setNlGenerating] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Responsive layout
+  // ---------------------------------------------------------------------------
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const isTiny = useMediaQuery('(max-width: 480px)');
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+
+  // Auto-hide sidebar on mobile screens
+  useEffect(() => {
+    if (isMobile) setSidebarVisible(false);
+  }, [isMobile]);
 
   // ---------------------------------------------------------------------------
   // React Flow instance (used for coordinate conversion on drop)
@@ -380,45 +394,75 @@ export default function WorkflowEditor() {
       <div
         style={{
           padding: '10px 20px',
-          borderBottom: '1px solid #e8eaf0',
+          borderBottom: '1px solid var(--border-color)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: '#fff',
+          background: 'var(--bg-card)',
+          gap: 8,
         }}
       >
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/workflows')}>
-            返回
+          {isMobile && (
+            <Button
+              type="text"
+              icon={sidebarVisible ? <CloseOutlined /> : <MenuOutlined />}
+              onClick={() => setSidebarVisible((v) => !v)}
+              style={{ color: 'var(--text-secondary, #5a6170)' }}
+            />
+          )}
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/workflows')}
+            {...(isTiny ? { type: 'text', style: { color: 'var(--text-secondary, #5a6170)' } } : {})}
+          >
+            {isTiny ? undefined : '返回'}
           </Button>
-          <div
-            style={{
-              width: 1,
-              height: 20,
-              background: '#e8eaf0',
-              margin: '0 8px',
-            }}
-          />
-          <Title level={5} style={{ margin: 0, fontWeight: 600 }}>
-            {currentWorkflow?.name || '工作流编辑器'}
-          </Title>
+          {!isTiny && (
+            <>
+              <div
+                style={{
+                  width: 1,
+                  height: 20,
+                  background: 'var(--border-color)',
+                  margin: '0 8px',
+                }}
+              />
+              <Title level={5} style={{ margin: 0, fontWeight: 600, fontSize: isTiny ? 14 : undefined }}>
+                {currentWorkflow?.name || '工作流编辑器'}
+              </Title>
+            </>
+          )}
         </Space>
-        <Space size={8}>
-          <Button icon={<ThunderboltOutlined />} onClick={() => setNlModalOpen(true)}>
-            AI 生成
+        <Space size={isTiny ? 4 : 8}>
+          <Button
+            icon={<ThunderboltOutlined />}
+            {...(isTiny ? { type: 'text', style: { color: 'var(--text-secondary, #5a6170)' } } : {})}
+            onClick={() => setNlModalOpen(true)}
+          >
+            {isTiny ? undefined : 'AI 生成'}
           </Button>
-          <Button icon={<SaveOutlined />} onClick={handleSave}>
-            保存
+          <Button
+            icon={<SaveOutlined />}
+            {...(isTiny ? { type: 'text', style: { color: 'var(--text-secondary, #5a6170)' } } : {})}
+            onClick={handleSave}
+          >
+            {isTiny ? undefined : '保存'}
           </Button>
-          <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleExecute}>
-            执行
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={handleExecute}
+            {...(isTiny ? { style: { width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' } } : {})}
+          >
+            {isTiny ? undefined : '执行'}
           </Button>
         </Space>
       </div>
 
       {/* Main content: sidebar + canvas */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <NodePalette />
+        {sidebarVisible && <NodePalette compact={isMobile} />}
 
         <ReactFlowProvider>
           <div style={{ flex: 1, position: 'relative' }}>
