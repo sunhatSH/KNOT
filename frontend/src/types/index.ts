@@ -28,6 +28,15 @@ export interface Workflow {
   tags?: string[];
 }
 
+export interface TraceEntry {
+  node_id: string;
+  node_type: string;
+  action?: string;
+  timestamp?: string;
+  result_summary?: string;
+  error?: string;
+}
+
 export interface Execution {
   id: string;
   workflow_id: string;
@@ -35,5 +44,7 @@ export interface Execution {
   node_states: Record<string, string>;
   global_context: Record<string, unknown>;
   error?: string;
-  trace: Array<Record<string, unknown>>;
+  trace: TraceEntry[];
+  started_at?: string;
+  completed_at?: string;
 }

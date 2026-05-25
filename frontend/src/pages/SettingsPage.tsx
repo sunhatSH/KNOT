@@ -1,0 +1,146 @@
+import { useState, useCallback } from 'react';
+import { Alert, Button, Card, Form, Input, message, Select, Switch, Typography } from 'antd';
+import { SettingOutlined } from '@ant-design/icons';
+
+const { Title } = Typography;
+
+const STORAGE_KEY = 'knot_settings';
+const BASE_URL = '/api/v1';
+
+const providerOptions = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'azure', label: 'Azure OpenAI' },
+  { value: 'ollama', label: 'Ollama' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'custom', label: 'Custom' },
+];
+
+interface SettingsValues {
+  llmProvider: string;
+  apiBaseUrl: string;
+  apiKey: string;
+  debugMode: boolean;
+}
+
+const defaultValues: SettingsValues = {
+  llmProvider: 'openai',
+  apiBaseUrl: '',
+  apiKey: '',
+  debugMode: false,
+};
+
+function loadSettings(): SettingsValues {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      return { ...defaultValues, ...JSON.parse(raw) };
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return defaultValues;
+}
+
+function saveSettings(values: SettingsValues) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
+}
+
+export default function SettingsPage() {
+  const [form] = Form.useForm();
+  const [testing, setTesting] = useState(false);
+
+  const initialValues = loadSettings();
+  const hasSettings = !!(initialValues.apiBaseUrl || initialValues.apiKey);
+
+  const handleTestConnection = useCallback(async () => {
+    setTesting(true);
+    try {
+      const values = form.getFieldsValue() as SettingsValues;
+      const baseUrl = values.apiBaseUrl || BASE_URL;
+      const response = await fetch(`${baseUrl}/health`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      message.success('连接成功');
+    } catch {
+      message.error('连接失败，请检查地址和配置');
+    } finally {
+      setTesting(false);
+    }
+  }, [form]);
+
+  const handleFinish = (values: SettingsValues) => {
+    saveSettings(values);
+    message.success('设置已保存');
+  };
+
+  return (
+    <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+      <Title level={3}>
+        <SettingOutlined style={{ marginRight: 8 }} />
+        设置
+      </Title>
+      <Card>
+        {!hasSettings && (
+          <Alert
+            message="尚未配置"
+            description="请填写以下 LLM 连接参数以启用 AI 功能。配置后会自动保存在本地浏览器中。"
+            type="info"
+            showIcon
+            style={{ marginBottom: 24 }}
+          />
+        )}
+
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={initialValues}
+          onFinish={handleFinish}
+        >
+          <Form.Item
+            name="llmProvider"
+            label="LLM Provider"
+            rules={[{ required: true, message: '请选择 LLM 提供商' }]}
+          >
+            <Select options={providerOptions} placeholder="选择 LLM 提供商" />
+          </Form.Item>
+
+          <Form.Item
+            name="apiBaseUrl"
+            label="API Base URL"
+            rules={[{ required: true, message: '请输入 API 地址' }]}
+          >
+            <Input placeholder="https://api.openai.com/v1" />
+          </Form.Item>
+
+          <Form.Item
+            name="apiKey"
+            label="API Key"
+            rules={[{ required: true, message: '请输入 API Key' }]}
+          >
+            <Input.Password placeholder="sk-..." />
+          </Form.Item>
+
+          <Form.Item
+            name="debugMode"
+            label="Debug Mode"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Button type="primary" htmlType="submit" style={{ marginRight: 12 }}>
+              保存设置
+            </Button>
+            <Button onClick={handleTestConnection} loading={testing} disabled={testing}>
+              测试连接
+            </Button>
+          </Form.Item>
+        </Form>
+      </Card>
+    </div>
+  );
+}

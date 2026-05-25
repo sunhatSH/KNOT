@@ -18,6 +18,10 @@ export const workflowApi = {
     client.get<Execution>(`/workflows/executions/${id}`).then(r => r.data),
 };
 
+export const executionApi = {
+  get: (id: string) => client.get<Execution>(`/workflows/executions/${id}`).then(r => r.data),
+};
+
 export const knowledgeApi = {
   createCollection: (name: string, dimension = 1024) =>
     client.post('/knowledge/collections', null, { params: { name, dimension } }),

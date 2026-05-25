@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -24,6 +25,31 @@ from knot.core.models import (
 from knot.llm.base import LLMMessage, LLMProvider
 
 logger = logging.getLogger(__name__)
+
+# ─── Constants ──────────────────────────────────────────────────────────────
+
+CHINESE_FIELD_MAP: dict[str, str] = {
+    "任务描述": "task_description",
+    "子任务": "subtasks",
+    "输出": "expected_output",
+    "预期输出": "expected_output",
+    "知识领域": "knowledge_domains",
+    "知识域": "knowledge_domains",
+    "全局指令": "global_instructions",
+    "标签": "label",
+    "名称": "name",
+    "描述": "description",
+    "角色": "agent_role",
+    "agent角色": "agent_role",
+    "Agent角色": "agent_role",
+    "依赖": "depends_on",
+    "节点类型": "node_type",
+    "类型": "type",
+    "多智能体模式": "multi_agent_mode",
+    "需要知识": "needs_knowledge",
+    "步骤": "steps",
+}
+
 
 # ─── Models ─────────────────────────────────────────────────────────────────
 
@@ -88,15 +114,36 @@ Rules:
 - For tasks requiring multiple perspectives, set multi_agent_mode to "parallel"
 - For tasks needing validation, include a validator step
 
-Respond ONLY with a valid JSON object. Use this exact structure:
-[
-  "task_description": a short summary,
-  "subtasks": list of objects with keys:
-    - label, description, agent_role, depends_on, node_type, multi_agent_mode, needs_knowledge,
-  "expected_output": description,
-  "knowledge_domains": list of relevant topics,
-  "global_instructions": any special instructions
-]
+You may use English field names (as shown in the example below) or Chinese
+field names. Chinese field names are automatically mapped, so both forms
+are valid:
+  - 任务描述 -> task_description
+  - 子任务 -> subtasks
+  - 输出 / 预期输出 -> expected_output
+  - 知识域 / 知识领域 -> knowledge_domains
+  - 全局指令 -> global_instructions
+  - 标签 -> label
+  - agent角色 / 角色 -> agent_role
+  - 依赖 -> depends_on
+
+Respond ONLY with valid JSON (no markdown, no extra text). Example structure:
+{
+  "task_description": "summary of the task",
+  "subtasks": [
+    {
+      "label": "short unique name",
+      "description": "what this sub-task does",
+      "agent_role": "executor|researcher|coder|validator|summarizer",
+      "depends_on": ["label_of_prerequisite"],
+      "node_type": "input|task|output|condition",
+      "multi_agent_mode": "single|parallel",
+      "needs_knowledge": true or false
+    }
+  ],
+  "expected_output": "description of final output",
+  "knowledge_domains": ["topic1", "topic2"],
+  "global_instructions": "any special instructions"
+}
 
 User request: %s
 """
@@ -150,6 +197,33 @@ class IntentParser:
         response = await self._llm.chat(messages, temperature=0.2)
         logger.warning("LLM raw response: %.500s", response.content)
         intent = self._parse_response(response.content)
+
+        # If JSON parsing failed or no subtasks extracted, try LLM re-parse
+        if intent is None or not intent.subtasks:
+            logger.warning(
+                "Initial parse yielded %s, requesting LLM re-parse",
+                "no intent" if intent is None
+                else f"{len(intent.subtasks)} subtask(s)",
+            )
+            retry_prompt = (
+                "Extract ONLY valid JSON from this response, "
+                "return nothing else:\n\n"
+                f"{response.content}"
+            )
+            retry_messages = [
+                LLMMessage(role="user", content=retry_prompt),
+            ]
+            response = await self._llm.chat(retry_messages, temperature=0.1)
+            logger.warning("LLM re-parse response: %.500s", response.content)
+            intent = self._parse_response(response.content)
+
+        # Final fallback if all parsing attempts fail
+        if intent is None or not intent.subtasks:
+            logger.warning(
+                "All parsing attempts failed, creating fallback intent from request"
+            )
+            intent = self._create_fallback_intent(user_request)
+
         logger.info(
             "Parsed intent: %d sub-tasks, domains: %s",
             len(intent.subtasks),
@@ -157,41 +231,53 @@ class IntentParser:
         )
         return intent
 
-    def _parse_response(self, content: str) -> Intent:
+    def _parse_response(self, content: str) -> Intent | None:
         """Parse LLM response JSON into an Intent object.
 
-        Handles JSON code blocks and direct JSON responses.
-        """
-        # Strip markdown code fences if present
-        text = content.strip()
-        if text.startswith("```"):
-            # Extract content between first and last ```
-            start = text.find("\n") + 1
-            end = text.rfind("```")
-            if end > start:
-                text = text[start:end].strip()
-            else:
-                text = text[6:].strip()  # remove ```json prefix
+        Handles:
+        - ```json ... ``` and ``` ... ``` markdown code blocks
+        - Chinese field names (e.g. "任务描述" -> "task_description")
+        - Regex-based JSON extraction when direct parsing fails
+        - Both dict ({"subtasks": [...]}) and list ([{...}, ...]) response formats
 
+        Returns None if all parsing methods fail (caller may retry with LLM).
+        """
+        text = content.strip()
+
+        # 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
+        if text.startswith("```"):
+            first_newline = text.find("\n")
+            if first_newline != -1:
+                text = text[first_newline + 1:]
+            else:
+                text = text[3:]  # strip bare ```
+            # Remove trailing backticks
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+        # 2. Try direct JSON parsing
+        data = None
         try:
             data = json.loads(text)
-        except json.JSONDecodeError as e:
-            logger.warning("JSON parse failed (%s), raw: %.100s", e, text)
-            # Fallback: create a minimal intent wrapping the raw request
-            return Intent(
-                task_description=content[:200],
-                subtasks=[
-                    SubTask(
-                        label="Execute Task",
-                        description=content[:500],
-                        agent_role="executor",
-                        node_type="task",
-                    )
-                ],
-                expected_output="Task result",
-            )
+        except json.JSONDecodeError:
+            logger.warning("Direct JSON parse failed, trying regex extraction")
 
-        # Handle both dict ({"subtasks": [...]}) and list ([{...}, ...]) responses
+        # 3. Try regex extraction if direct parsing failed
+        if data is None:
+            data = self._extract_json_with_regex(text)
+
+        if data is None:
+            logger.warning(
+                "All JSON parsing methods failed, raw: %.200s", text
+            )
+            return None
+
+        # 4. Map Chinese field names to English at the top level
+        if isinstance(data, dict):
+            data = self._map_chinese_fields(data)
+
+        # 5. Handle both dict ({"subtasks": [...]}) and list ([{...}, ...]) responses
         if isinstance(data, list):
             raw_subtasks = data
             task_desc = ""
@@ -205,20 +291,34 @@ class IntentParser:
             domains = data.get("knowledge_domains", data.get("domains", []))
             instructions = data.get("global_instructions", "")
 
+        # 6. Build subtasks (also mapping Chinese fields in each subtask item)
         subtasks = []
         for st in raw_subtasks if isinstance(raw_subtasks, list) else []:
+            if isinstance(st, dict):
+                st = self._map_chinese_fields(st)
+
             label = st.get("label", st.get("name", "Untitled Step"))
             subtasks.append(
                 SubTask(
                     label=label,
                     description=st.get("description", ""),
-                    agent_role=st.get("agent_role", st.get("role", "executor")),
-                    depends_on=st.get("depends_on", st.get("depends", [])),
-                    node_type=st.get("node_type", st.get("type", "task")),
+                    agent_role=st.get(
+                        "agent_role", st.get("role", "executor")
+                    ),
+                    depends_on=st.get(
+                        "depends_on", st.get("depends", [])
+                    ),
+                    node_type=st.get(
+                        "node_type", st.get("type", "task")
+                    ),
                     multi_agent_mode=st.get("multi_agent_mode", "single"),
                     needs_knowledge=st.get("needs_knowledge", True),
                 )
             )
+
+        if not subtasks:
+            logger.warning("No subtasks extracted from parsed JSON")
+            return None
 
         return Intent(
             task_description=task_desc,
@@ -226,6 +326,94 @@ class IntentParser:
             expected_output=expected_out,
             knowledge_domains=domains,
             global_instructions=instructions,
+        )
+
+    @staticmethod
+    def _extract_json_with_regex(text: str) -> dict | list | None:
+        """Extract JSON from text using regex and json.JSONDecoder.raw_decode.
+
+        Iterates through the text looking for '{' or '[' characters and
+        attempts to decode a JSON value starting at each position. This
+        handles nested structures correctly and finds JSON even when
+        surrounded by arbitrary text.
+        """
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(text):
+            if ch in ("{", "["):
+                try:
+                    data, _ = decoder.raw_decode(text, i)
+                    return data
+                except (json.JSONDecodeError, ValueError):
+                    continue
+        return None
+
+    @staticmethod
+    def _map_chinese_fields(data: dict) -> dict:
+        """Recursively map Chinese field names to English equivalents."""
+        if not isinstance(data, dict):
+            return data
+        mapped: dict[str, Any] = {}
+        for key, value in data.items():
+            new_key = CHINESE_FIELD_MAP.get(key, key)
+            if isinstance(value, dict):
+                mapped[new_key] = IntentParser._map_chinese_fields(value)
+            elif isinstance(value, list):
+                mapped[new_key] = [
+                    IntentParser._map_chinese_fields(item)
+                    if isinstance(item, dict)
+                    else item
+                    for item in value
+                ]
+            else:
+                mapped[new_key] = value
+        return mapped
+
+    @staticmethod
+    def _create_fallback_intent(content: str) -> Intent:
+        """Create a reasonable fallback Intent when all parsing methods fail.
+
+        Builds a small default DAG (requirements -> execute -> output) instead
+        of a single "Untitled Step".
+        """
+        default_steps = [
+            (
+                "Understand Requirements",
+                "Analyze and understand the task requirements",
+                "planner",
+                "input",
+                [],
+            ),
+            (
+                "Execute Main Task",
+                "Perform the primary task execution",
+                "executor",
+                "task",
+                ["Understand Requirements"],
+            ),
+            (
+                "Generate Output",
+                "Produce and present the final output",
+                "summarizer",
+                "output",
+                ["Execute Main Task"],
+            ),
+        ]
+        subtasks = []
+        for label, desc, role, ntype, depends_on in default_steps:
+            subtasks.append(
+                SubTask(
+                    label=label,
+                    description=desc,
+                    agent_role=role,
+                    node_type=ntype,
+                    depends_on=depends_on,
+                    needs_knowledge=(role in ("researcher", "executor")),
+                )
+            )
+        return Intent(
+            task_description=content[:200] if content else "User request",
+            subtasks=subtasks,
+            expected_output="Completed task output",
         )
 
 
@@ -244,8 +432,55 @@ class WorkflowGenerator:
         "summarizer": "agent_summarizer",
     }
 
+    # Chinese-to-English label mapping for subtitle display
+    CHINESE_LABEL_MAP: dict[str, str] = {
+        "搜索": "Search",
+        "分析": "Analyze",
+        "总结": "Summarize",
+        "生成": "Generate",
+        "提取": "Extract",
+        "验证": "Validate",
+        "规划": "Plan",
+        "执行": "Execute",
+        "报告": "Report",
+        "收集": "Collect",
+        "处理": "Process",
+        "转换": "Transform",
+        "合并": "Merge",
+        "分割": "Split",
+        "过滤": "Filter",
+        "排序": "Sort",
+        "比较": "Compare",
+        "评估": "Evaluate",
+        "优化": "Optimize",
+        "测试": "Test",
+        "部署": "Deploy",
+        "监控": "Monitor",
+        "通知": "Notify",
+        "审查": "Review",
+        "批准": "Approve",
+        "拒绝": "Reject",
+        "分配": "Assign",
+        "输入": "Input",
+        "输出": "Output",
+        "任务": "Task",
+        "步骤": "Step",
+    }
+
     def __init__(self, llm_provider: LLMProvider | None = None):
         self._llm = llm_provider
+
+    @staticmethod
+    def _translate_label(label: str) -> str:
+        """Translate a Chinese label to English if it contains Chinese characters.
+
+        The LLM typically returns English labels, but this ensures Chinese
+        labels are also handled gracefully.
+        """
+        for cn, en in WorkflowGenerator.CHINESE_LABEL_MAP.items():
+            if cn in label:
+                label = label.replace(cn, en)
+        return label
 
     async def generate(
         self,
@@ -275,7 +510,7 @@ class WorkflowGenerator:
 
             node = Node(
                 type=node_type,
-                label=st.label,
+                label=self._translate_label(st.label),
                 # description stored in config
 
                 agent_id=agent_id,

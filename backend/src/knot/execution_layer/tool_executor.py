@@ -132,3 +132,184 @@ class CalculatorTool(BaseTool):
             return ToolResult(success=True, output={"result": result})
         except Exception as e:
             return ToolResult(success=False, error=f"Invalid expression: {e}")
+
+
+class FileReadTool(BaseTool):
+    """Read file contents from the local filesystem.
+
+    Only allows reading from /tmp or directories configured via the
+    SAFE_FILE_DIRS environment variable (comma-separated).
+    """
+
+    _SAFE_DIRS: list[str] | None = None
+
+    @property
+    def name(self) -> str:
+        return "file_read"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Read file contents from the local filesystem. "
+            "Only files within allowed directories (/tmp or SAFE_FILE_DIRS) can be read."
+        )
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to read",
+                },
+            },
+            "required": ["path"],
+        }
+
+    def _get_safe_dirs(self) -> list[str]:
+        if FileReadTool._SAFE_DIRS is not None:
+            return FileReadTool._SAFE_DIRS
+        dirs = ["/tmp"]
+        env_dirs = os.environ.get("SAFE_FILE_DIRS", "")
+        if env_dirs:
+            dirs.extend(d.strip() for d in env_dirs.split(",") if d.strip())
+        FileReadTool._SAFE_DIRS = dirs
+        return dirs
+
+    async def execute(self, params: dict[str, Any]) -> ToolResult:
+        import os
+        from pathlib import Path
+
+        path = params.get("path", "")
+        if not path:
+            return ToolResult(success=False, error="No path provided")
+
+        resolved = Path(path).resolve()
+        safe_dirs = [Path(d).resolve() for d in self._get_safe_dirs()]
+        allowed = any(
+            str(resolved).startswith(str(sd) + "/") or str(resolved) == str(sd)
+            for sd in safe_dirs
+        )
+
+        if not allowed:
+            return ToolResult(
+                success=False,
+                error=f"Access denied: '{path}' is not in an allowed directory",
+            )
+
+        if not resolved.exists():
+            return ToolResult(success=False, error=f"File not found: {path}")
+
+        if not resolved.is_file():
+            return ToolResult(success=False, error=f"Not a file: {path}")
+
+        try:
+            content = resolved.read_text(encoding="utf-8")
+            return ToolResult(
+                success=True,
+                output={
+                    "path": str(resolved),
+                    "size": len(content),
+                    "content": content,
+                },
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=f"Failed to read file: {e}")
+
+
+class CurrentTimeTool(BaseTool):
+    """Get the current date and time."""
+
+    @property
+    def name(self) -> str:
+        return "current_time"
+
+    @property
+    def description(self) -> str:
+        return "Get the current date and time in ISO format with timezone information."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+        }
+
+    async def execute(self, params: dict[str, Any]) -> ToolResult:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        local_now = now.astimezone()
+        local_tz = local_now.tzinfo
+
+        return ToolResult(
+            success=True,
+            output={
+                "utc_iso": now.isoformat(),
+                "local_iso": local_now.isoformat(),
+                "timezone": str(local_tz),
+                "utc_offset": str(local_tz.utcoffset(local_now)) if local_tz else "",
+                "timestamp": int(now.timestamp()),
+            },
+        )
+
+
+class WebSearchTool(BaseTool):
+    """Simple web search via HTTP GET.
+
+    Uses a configurable search URL. Set the SEARCH_URL environment variable
+    to customize the search endpoint (use {query} as a placeholder).
+    Defaults to the DuckDuckGo instant answer API.
+    """
+
+    def __init__(self):
+        import httpx
+        self._client = httpx.AsyncClient()
+
+    @property
+    def name(self) -> str:
+        return "web_search"
+
+    @property
+    def description(self) -> str:
+        return "Search the web using a configurable search engine URL. Returns search results."
+
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query string",
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of results to return (default: 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        }
+
+    async def execute(self, params: dict[str, Any]) -> ToolResult:
+        import os
+
+        query = params.get("query", "")
+        if not query:
+            return ToolResult(success=False, error="No query provided")
+
+        search_url = os.environ.get(
+            "SEARCH_URL",
+            "https://api.duckduckgo.com/?q={query}&format=json",
+        )
+        url = search_url.replace("{query}", query)
+
+        try:
+            resp = await self._client.get(url, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            return ToolResult(
+                success=True,
+                output={"query": query, "results": data},
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=f"Search failed: {e}")
