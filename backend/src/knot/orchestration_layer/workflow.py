@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any, Literal, TypedDict
 
@@ -37,6 +38,7 @@ class LangGraphState(TypedDict):
     """State schema for the LangGraph workflow executor."""
 
     workflow_json: str  # Serialized workflow definition
+    workflow_id: str  # Extracted workflow ID for broadcasting
     execution_id: str
     current_node_id: str | None
     execution_order: list[str]  # Topological node order
@@ -62,18 +64,63 @@ def build_init_state(state: LangGraphState) -> dict[str, Any]:
     }
 
 
+def _build_execution_snapshot(
+    execution_id: str,
+    workflow_id: str,
+    status: str,
+    node_statuses: dict[str, str],
+    node_results: dict[str, Any],
+    global_context: dict[str, Any],
+    error: str | None,
+    trace: list[dict[str, Any]],
+    current_node_id: str | None = None,
+    started_at: str | None = None,
+) -> dict[str, Any]:
+    """Build a partial Execution-like dict for WebSocket broadcasting.
+
+    The returned dict is compatible with the frontend ``Execution`` type
+    so the client can use it to update its UI directly.
+    """
+    snapshot: dict[str, Any] = {
+        "id": execution_id,
+        "workflow_id": workflow_id,
+        "status": status,
+        "node_states": {
+            k: v.value if isinstance(v, NodeStatus) else v
+            for k, v in node_statuses.items()
+        },
+        "global_context": global_context,
+        "error": error,
+        "trace": trace,
+    }
+    if current_node_id is not None:
+        snapshot["current_node_id"] = current_node_id
+    if started_at is not None:
+        snapshot["started_at"] = started_at
+    return snapshot
+
+
 def build_execute_node(
     llm_provider: LLMProvider,
     scheduler: AgentScheduler,
     retriever: HybridRetriever | None = None,
     enhancer: ContextEnhancer | None = None,
     workflow_state: WorkflowState | None = None,
+    broadcast_fn: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
 ):
-    """Create a LangGraph node function that executes the current workflow node."""
+    """Create a LangGraph node function that executes the current workflow node.
+
+    Args:
+        broadcast_fn: Optional async callable ``(execution_id, snapshot_dict)``
+            used to push real-time state updates to WebSocket subscribers.
+    """
 
     _ws = workflow_state  # Local ref for closure
 
     async def execute_node(state: LangGraphState) -> dict[str, Any]:
+        execution_id = state.get("execution_id", "")
+        workflow_id = state.get("workflow_id", "")
+
         # ── Control point: before each superstep ──
         if _ws is not None:
             try:
@@ -88,6 +135,18 @@ def build_execute_node(
                         message="Workflow execution was cancelled",
                     ).model_dump()
                 )
+                snapshot = _build_execution_snapshot(
+                    execution_id=execution_id,
+                    workflow_id=workflow_id,
+                    status=WorkflowStatus.CANCELLED.value,
+                    node_statuses=state.get("node_statuses", {}),
+                    node_results=state.get("node_results", {}),
+                    global_context=state.get("global_context", {}),
+                    error=None,
+                    trace=new_trace,
+                )
+                if broadcast_fn:
+                    await broadcast_fn(execution_id, snapshot)
                 return {
                     "status": WorkflowStatus.CANCELLED.value,
                     "trace": new_trace,
@@ -98,6 +157,18 @@ def build_execute_node(
         idx = state["current_index"]
 
         if idx >= len(order):
+            snapshot = _build_execution_snapshot(
+                execution_id=execution_id,
+                workflow_id=workflow_id,
+                status=WorkflowStatus.SUCCESS.value,
+                node_statuses=state.get("node_statuses", {}),
+                node_results=state.get("node_results", {}),
+                global_context=state.get("global_context", {}),
+                error=None,
+                trace=state.get("trace", []),
+            )
+            if broadcast_fn:
+                await broadcast_fn(execution_id, snapshot)
             return {"status": WorkflowStatus.SUCCESS.value}
 
         node_id = order[idx]
@@ -123,6 +194,21 @@ def build_execute_node(
                 message=f"Starting execution of node '{node.label or node_id}'",
             ).model_dump()
         )
+
+        # Broadcast node_start
+        start_snapshot = _build_execution_snapshot(
+            execution_id=execution_id,
+            workflow_id=workflow_id,
+            status=WorkflowStatus.RUNNING.value,
+            node_statuses=state.get("node_statuses", {}),
+            node_results=state.get("node_results", {}),
+            global_context=state.get("global_context", {}),
+            error=None,
+            trace=new_trace,
+            current_node_id=node_id,
+        )
+        if broadcast_fn:
+            await broadcast_fn(execution_id, start_snapshot)
 
         # Internal trace collector for sub-operations
         internal_trace: list[dict[str, Any]] = []
@@ -170,6 +256,19 @@ def build_execute_node(
                     if isinstance(result, dict):
                         new_context.update(result)
 
+                    if broadcast_fn:
+                        cancel_snapshot = _build_execution_snapshot(
+                            execution_id=execution_id,
+                            workflow_id=workflow_id,
+                            status=WorkflowStatus.CANCELLED.value,
+                            node_statuses=new_node_statuses,
+                            node_results=new_node_results,
+                            global_context=new_context,
+                            error=None,
+                            trace=new_trace,
+                        )
+                        await broadcast_fn(execution_id, cancel_snapshot)
+
                     return {
                         "status": WorkflowStatus.CANCELLED.value,
                         "node_statuses": new_node_statuses,
@@ -210,6 +309,19 @@ def build_execute_node(
             if isinstance(result, dict):
                 new_context.update(result)
 
+            if broadcast_fn:
+                success_snapshot = _build_execution_snapshot(
+                    execution_id=execution_id,
+                    workflow_id=workflow_id,
+                    status=WorkflowStatus.RUNNING.value,
+                    node_statuses=new_node_statuses,
+                    node_results=new_node_results,
+                    global_context=new_context,
+                    error=None,
+                    trace=new_trace,
+                )
+                await broadcast_fn(execution_id, success_snapshot)
+
             return {
                 "node_statuses": new_node_statuses,
                 "node_results": new_node_results,
@@ -230,6 +342,18 @@ def build_execute_node(
                     message="Workflow execution was cancelled",
                 ).model_dump()
             )
+            if broadcast_fn:
+                cancel_snapshot = _build_execution_snapshot(
+                    execution_id=execution_id,
+                    workflow_id=workflow_id,
+                    status=WorkflowStatus.CANCELLED.value,
+                    node_statuses=state.get("node_statuses", {}),
+                    node_results=state.get("node_results", {}),
+                    global_context=state.get("global_context", {}),
+                    error=None,
+                    trace=new_trace,
+                )
+                await broadcast_fn(execution_id, cancel_snapshot)
             return {
                 "status": WorkflowStatus.CANCELLED.value,
                 "trace": new_trace,
@@ -264,11 +388,36 @@ def build_execute_node(
             if node.max_retries > 0 and node.retry_count < node.max_retries:
                 node.retry_count += 1
                 logger.info("Retrying node %s (attempt %d/%d)", node_id, node.retry_count, node.max_retries)
+                if broadcast_fn:
+                    retry_snapshot = _build_execution_snapshot(
+                        execution_id=execution_id,
+                        workflow_id=workflow_id,
+                        status=WorkflowStatus.RUNNING.value,
+                        node_statuses=new_node_statuses,
+                        node_results=state.get("node_results", {}),
+                        global_context=state.get("global_context", {}),
+                        error=str(e),
+                        trace=new_trace,
+                    )
+                    await broadcast_fn(execution_id, retry_snapshot)
                 return {
                     "node_statuses": new_node_statuses,
                     "current_index": idx,  # Re-run same node
                     "trace": new_trace,
                 }
+
+            if broadcast_fn:
+                fail_snapshot = _build_execution_snapshot(
+                    execution_id=execution_id,
+                    workflow_id=workflow_id,
+                    status=WorkflowStatus.FAILED.value,
+                    node_statuses=new_node_statuses,
+                    node_results=state.get("node_results", {}),
+                    global_context=state.get("global_context", {}),
+                    error=str(e),
+                    trace=new_trace,
+                )
+                await broadcast_fn(execution_id, fail_snapshot)
 
             return {
                 "status": WorkflowStatus.FAILED.value,
@@ -462,11 +611,13 @@ class WorkflowEngine:
         scheduler: AgentScheduler,
         retriever: HybridRetriever | None = None,
         enhancer: ContextEnhancer | None = None,
+        broadcast_fn: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ):
         self._llm_provider = llm_provider
         self._scheduler = scheduler
         self._retriever = retriever
         self._enhancer = enhancer
+        self._broadcast_fn = broadcast_fn
         # Map execution_id -> WorkflowState for in-flight executions.
         # Control API endpoints (pause/resume/cancel) look up the state
         # from this dict to signal the running task.
@@ -505,6 +656,7 @@ class WorkflowEngine:
                 retriever=self._retriever,
                 enhancer=self._enhancer,
                 workflow_state=workflow_state,
+                broadcast_fn=self._broadcast_fn,
             ))
             graph.add_node("finalize", build_finalize())
 
@@ -528,6 +680,7 @@ class WorkflowEngine:
             # Run
             initial_state: LangGraphState = {
                 "workflow_json": workflow.model_dump_json(),
+                "workflow_id": workflow.id,
                 "execution_id": execution.id,
                 "current_node_id": None,
                 "execution_order": order,
@@ -573,6 +726,11 @@ class WorkflowEngine:
             logger.info(
                 "Workflow '%s' completed: %s", workflow.name, execution.status.value
             )
+
+            # Broadcast final state to WebSocket subscribers
+            if self._broadcast_fn:
+                await self._broadcast_fn(execution.id, execution.model_dump())
+
             return execution
 
         finally:

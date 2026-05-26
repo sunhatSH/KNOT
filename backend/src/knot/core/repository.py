@@ -394,11 +394,17 @@ class UserRepository:
 
 def _conv_session_to_orm(session: ConversationSession) -> ConversationSessionModel:
     """Convert a Pydantic ConversationSession to an ORM ConversationSessionModel."""
+    turns_data = []
+    for t in session.turns:
+        td = t.model_dump()
+        td["timestamp"] = td["timestamp"].isoformat()
+        turns_data.append(td)
+
     return ConversationSessionModel(
         id=session.id,
         workflow_id=session.workflow_id,
         execution_id=session.execution_id,
-        turns_json=[t.model_dump() for t in session.turns],
+        turns_json=turns_data,
         summary=session.summary,
         turn_count=session.turn_count,
         created_at=session.created_at,

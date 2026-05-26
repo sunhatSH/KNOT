@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Card, Spin, Tag, Typography, Timeline, Empty, Button, Descriptions,
-  Collapse, Statistic, Row, Col, message,
+  Collapse, Statistic, Row, Col, message, Badge,
 } from 'antd';
 import {
   ArrowLeftOutlined, LoadingOutlined,
@@ -13,6 +13,7 @@ import {
 
 import { executionApi } from '@/api/client';
 import type { Execution, TraceEntry } from '@/types';
+import { useExecutionWebSocket } from '@/hooks/useExecutionWebSocket';
 
 const { Title, Text } = Typography;
 
@@ -208,9 +209,18 @@ export default function ExecutionDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // WebSocket real-time updates
+  const {
+    execution: wsExecution,
+    connected: wsConnected,
+  } = useExecutionWebSocket(id);
+
   const [pausing, setPausing] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+
+  // Polling timer ref
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handlePause = () => {
     if (!id) return;
@@ -257,6 +267,7 @@ export default function ExecutionDetail() {
       .finally(() => setCancelling(false));
   };
 
+  // ── Initial REST fetch ────────────────────────────────────────────────
   useEffect(() => {
     if (!id) {
       setError('执行 ID 不能为空');
@@ -282,6 +293,60 @@ export default function ExecutionDetail() {
         setLoading(false);
       });
   }, [id]);
+
+  // ── WebSocket state updates ────────────────────────────────────────────
+  // When WS pushes a new state, update local state immediately.
+  useEffect(() => {
+    if (wsExecution) {
+      setExecution(wsExecution);
+    }
+  }, [wsExecution]);
+
+  // ── REST polling fallback ──────────────────────────────────────────────
+  // Poll every 3s when WS is disconnected and execution is still active
+  // (running or paused). Stop polling when WS is connected or execution
+  // has reached a terminal state.
+  useEffect(() => {
+    const isTerminal = execution?.status === 'success'
+      || execution?.status === 'failed'
+      || execution?.status === 'cancelled';
+
+    if (!id || isTerminal) {
+      if (pollingRef.current !== null) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
+
+    // If WS is connected, skip polling
+    if (wsConnected) {
+      if (pollingRef.current !== null) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
+
+    // Start polling (only if not already running)
+    if (pollingRef.current === null) {
+      pollingRef.current = setInterval(() => {
+        executionApi.get(id).then((data) => {
+          setExecution(data);
+        }).catch(() => {
+          // Silently ignore polling errors — the initial fetch
+          // already handled connectivity issues.
+        });
+      }, 3000);
+    }
+
+    return () => {
+      if (pollingRef.current !== null) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [id, execution?.status, wsConnected]);
 
   /* ---- Loading state ---- */
   if (loading) {
@@ -365,6 +430,19 @@ export default function ExecutionDetail() {
         <Title level={4} style={{ margin: 0 }}>
           执行详情
         </Title>
+
+        {/* WebSocket connection indicator */}
+        <Badge
+          status={wsConnected ? 'success' : 'default'}
+          text={
+            <Text
+              type={wsConnected ? 'success' : 'secondary'}
+              style={{ fontSize: 12 }}
+            >
+              {wsConnected ? '实时' : '轮询'}
+            </Text>
+          }
+        />
 
         {/* Control buttons based on execution status */}
         <div style={{ flex: 1 }} />

@@ -32,3 +32,8 @@ Thumbs.db
 *.log
 data/
 *.db
+
+# Playwright E2E tests
+frontend/e2e/node_modules/
+frontend/e2e/test-results/
+frontend/e2e/playwright-report/

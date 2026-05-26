@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
 
+    # Rate limiting
+    rate_limit_per_minute: int = 60
+
     model_config = {
         "env_file": str(_ENV_FILE) if _ENV_FILE.exists() else ".env",
         "env_file_encoding": "utf-8",
