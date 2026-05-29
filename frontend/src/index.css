@@ -67,3 +67,32 @@ body {
   background: #1f1f1f;
   border-bottom-color: #303030;
 }
+
+/* Dashboard stat card hover effect */
+.dashboard-stat-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.dashboard-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .dashboard-stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Dashboard recent workflows list item hover */
+.dashboard-recent-item {
+  transition: background 0.15s ease;
+}
+.dashboard-recent-item:hover {
+  background: var(--bg-page);
+}
+
+/* Dashboard quick start card icon container */
+.dashboard-quick-icon {
+  transition: transform 0.2s ease;
+}
+.dashboard-quick-icon:hover {
+  transform: scale(1.05);
+}

@@ -1,7 +1,9 @@
 import { useState, useCallback } from 'react';
 import { Alert, Button, Card, Form, Input, message, Select, Switch, Typography, Space, Divider } from 'antd';
-import { SettingOutlined } from '@ant-design/icons';
+import { SettingOutlined, GlobalOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useLanguage } from '@/i18n/useLanguage';
 
 const { Title, Text } = Typography;
 
@@ -47,9 +49,11 @@ function saveSettings(values: SettingsValues) {
 }
 
 export default function SettingsPage() {
+  const { t } = useTranslation();
   const [form] = Form.useForm();
   const [testing, setTesting] = useState(false);
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const { currentLang, switchLanguage } = useLanguage();
 
   const initialValues = loadSettings();
   const hasSettings = !!(initialValues.apiBaseUrl || initialValues.apiKey);
@@ -65,9 +69,9 @@ export default function SettingsPage() {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      message.success('连接成功');
+      message.success(t('settings.connectionSuccess'));
     } catch {
-      message.error('连接失败，请检查地址和配置');
+      message.error(t('settings.connectionFailed'));
     } finally {
       setTesting(false);
     }
@@ -75,7 +79,7 @@ export default function SettingsPage() {
 
   const handleFinish = (values: SettingsValues) => {
     saveSettings(values);
-    message.success('设置已保存');
+    message.success(t('settings.saved'));
   };
 
   return (
@@ -83,10 +87,10 @@ export default function SettingsPage() {
       {/* Page header */}
       <div style={{ marginBottom: 24 }}>
         <Title level={3} style={{ margin: 0 }}>
-          设置
+          {t('settings.title')}
         </Title>
         <Text type="secondary" style={{ marginTop: 4, display: 'block', fontSize: 14 }}>
-          配置 LLM 连接参数以启用 AI 功能
+          {t('settings.subtitle')}
         </Text>
       </div>
 
@@ -98,8 +102,8 @@ export default function SettingsPage() {
       >
         {!hasSettings && (
           <Alert
-            message="尚未配置"
-            description="请填写以下 LLM 连接参数以启用 AI 功能。配置后会自动保存在本地浏览器中。"
+            message={t('settings.notConfigured')}
+            description={t('settings.notConfiguredDesc')}
             type="info"
             showIcon
             style={{ marginBottom: 24 }}
@@ -114,33 +118,33 @@ export default function SettingsPage() {
         >
           <Form.Item
             name="llmProvider"
-            label="LLM Provider"
-            rules={[{ required: true, message: '请选择 LLM 提供商' }]}
+            label={t('settings.llmProvider')}
+            rules={[{ required: true, message: t('settings.providerRequired') }]}
           >
-            <Select options={providerOptions} placeholder="选择 LLM 提供商" />
+            <Select options={providerOptions} placeholder={t('settings.selectProvider')} />
           </Form.Item>
 
           <Form.Item
             name="apiBaseUrl"
-            label="API Base URL"
-            rules={[{ required: true, message: '请输入 API 地址' }]}
+            label={t('settings.apiBaseUrl')}
+            rules={[{ required: true, message: t('settings.apiBaseUrlRequired') }]}
           >
-            <Input placeholder="https://api.openai.com/v1" />
+            <Input placeholder={t('settings.apiBaseUrlPlaceholder')} />
           </Form.Item>
 
           <Form.Item
             name="apiKey"
-            label="API Key"
-            rules={[{ required: true, message: '请输入 API Key' }]}
+            label={t('settings.apiKey')}
+            rules={[{ required: true, message: t('settings.apiKeyRequired') }]}
           >
-            <Input.Password placeholder="sk-..." />
+            <Input.Password placeholder={t('settings.apiKeyPlaceholder')} />
           </Form.Item>
 
           <Divider style={{ margin: '16px 0' }} />
 
           <Form.Item
             name="debugMode"
-            label="Debug Mode"
+            label={t('settings.debugMode')}
             valuePropName="checked"
           >
             <Switch />
@@ -151,14 +155,43 @@ export default function SettingsPage() {
           <Form.Item style={{ marginBottom: 0 }}>
             <Space>
               <Button type="primary" htmlType="submit">
-                保存设置
+                {t('settings.save')}
               </Button>
               <Button onClick={handleTestConnection} loading={testing} disabled={testing}>
-                测试连接
+                {t('settings.test')}
               </Button>
             </Space>
           </Form.Item>
         </Form>
+      </Card>
+
+      {/* Language settings */}
+      <Card
+        style={{
+          marginTop: 16,
+          borderRadius: 8,
+          border: '1px solid #e8eaf0',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 4 }}>
+              {t('settings.language')}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              {currentLang === 'zh' ? '简体中文' : 'English'}
+            </Text>
+          </div>
+          <Select
+            value={currentLang}
+            onChange={(value) => switchLanguage(value as 'zh' | 'en')}
+            style={{ width: 140 }}
+            options={[
+              { value: 'zh', label: '中文' },
+              { value: 'en', label: 'English' },
+            ]}
+          />
+        </div>
       </Card>
     </div>
   );

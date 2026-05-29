@@ -40,6 +40,13 @@ export interface TraceEntry {
   metadata?: Record<string, unknown>;
 }
 
+export interface User {
+  id: string;
+  username: string;
+  email?: string;
+  created_at?: string;
+}
+
 export interface Execution {
   id: string;
   workflow_id: string;
@@ -50,4 +57,38 @@ export interface Execution {
   trace: TraceEntry[];
   started_at?: string;
   completed_at?: string;
+}
+
+// ─── Multi-Agent ─────────────────────────────────────────────────────────────
+
+export type MultiAgentMode = 'pipeline' | 'parallel' | 'debate';
+export type AgentRole =
+  | 'planner'
+  | 'executor'
+  | 'reviewer'
+  | 'observer'
+  | 'researcher'
+  | 'coder'
+  | 'validator'
+  | 'summarizer';
+
+export interface AgentConfig {
+  id: string;
+  name: string;
+  role: AgentRole;
+  capabilities?: string[];
+  model_name?: string;
+  model?: string;       // backend field name
+  temperature?: number;
+  instructions?: string;
+  system_prompt?: string; // backend field name
+  tools?: string[];     // backend field name
+  config?: Record<string, unknown>;
+}
+
+export interface AgentTeamMember {
+  agent_id: string;
+  agent_name: string;
+  role: AgentRole;
+  temperature: number;
 }

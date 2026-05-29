@@ -3,7 +3,10 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import enUS from 'antd/locale/en_US';
+import { useTranslation } from 'react-i18next';
 import App from './App';
+import './i18n';
 import './index.css';
 import { useThemeStore } from './store/themeStore';
 
@@ -60,8 +63,10 @@ function getThemeConfig(mode: 'light' | 'dark') {
 
 function ThemedApp() {
   const mode = useThemeStore((s) => s.mode);
+  const { i18n } = useTranslation();
+  const antdLocale = i18n.language?.startsWith('en') ? enUS : zhCN;
   return (
-    <ConfigProvider locale={zhCN} theme={getThemeConfig(mode)}>
+    <ConfigProvider locale={antdLocale} theme={getThemeConfig(mode)}>
       <BrowserRouter>
         <App />
       </BrowserRouter>

@@ -1,7 +1,31 @@
 import axios from 'axios';
-import type { Workflow, Execution } from '@/types';
+import type { Workflow, Execution, User, AgentConfig } from '@/types';
 
 const client = axios.create({ baseURL: '/api/v1' });
+
+// Request interceptor: attach auth token
+client.interceptors.request.use((config) => {
+  const token = localStorage.getItem('knot-token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor: handle 401
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('knot-token');
+      // Only redirect if not already on an auth page
+      if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const workflowApi = {
   list: () => client.get<Workflow[]>('/workflows').then(r => r.data),
@@ -43,4 +67,24 @@ export const knowledgeApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then(r => r.data);
   },
+};
+
+export const agentApi = {
+  list: () => client.get<AgentConfig[]>('/api/v1/agents').then(r => r.data),
+  register: (agent: Partial<AgentConfig>) =>
+    client.post<AgentConfig>('/api/v1/agents', agent).then(r => r.data),
+};
+
+export const authApi = {
+  login: (username: string, password: string) =>
+    client.post<{access_token: string; token_type: string; user: User}>('/auth/login', null, {
+      params: { username, password }
+    }).then(r => r.data),
+
+  register: (username: string, password: string, email?: string) =>
+    client.post<{id: string; username: string; message: string}>('/auth/register', null, {
+      params: { username, password, email: email || '' }
+    }).then(r => r.data),
+
+  me: () => client.get<User>('/auth/me').then(r => r.data),
 };

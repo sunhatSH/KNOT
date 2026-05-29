@@ -6,8 +6,10 @@ import {
   SettingOutlined,
   SunOutlined,
   MoonOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import { useThemeStore } from '@/store/themeStore';
+import { useLanguage } from '@/i18n/useLanguage';
 
 const { Header } = Layout;
 
@@ -33,6 +35,7 @@ export default function AppHeader() {
   const navigate = useNavigate();
   const location = useLocation();
   const { mode, toggle } = useThemeStore();
+  const { currentLang, switchLanguage } = useLanguage();
 
   const selectedKey = location.pathname.startsWith('/workflows')
     ? '/workflows'
@@ -88,6 +91,16 @@ export default function AppHeader() {
         onClick={() => toggle()}
         style={{ color: 'var(--text-secondary, #5a6170)' }}
       />
+
+      {/* Language switcher */}
+      <Button
+        type="text"
+        icon={<GlobalOutlined />}
+        onClick={() => switchLanguage(currentLang === 'zh' ? 'en' : 'zh')}
+        style={{ color: 'var(--text-secondary, #5a6170)', marginLeft: 4 }}
+      >
+        {currentLang === 'zh' ? 'EN' : '中'}
+      </Button>
     </Header>
   );
 }

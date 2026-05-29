@@ -30,6 +30,8 @@ import { useWorkflowStore } from '@/store/workflowStore';
 import type { Workflow, Execution, Node } from '@/types';
 import NodePalette from '@/components/NodePalette';
 import WorkflowNode from '@/components/WorkflowNode';
+import AgentConfigPanel from '@/components/AgentConfigPanel';
+import type { MultiAgentMode, AgentTeamMember } from '@/types';
 
 const { Title, Text } = Typography;
 
@@ -287,6 +289,32 @@ export default function WorkflowEditor() {
     if (!selectedNodeId || !currentWorkflow) return null;
     return currentWorkflow.nodes.find((n) => n.id === selectedNodeId) ?? null;
   }, [selectedNodeId, currentWorkflow]);
+
+  // ---------------------------------------------------------------------------
+  // Multi-agent helpers (reads/writes node.config)
+  // ---------------------------------------------------------------------------
+  const updateNodeConfig = useCallback(
+    (nodeId: string, configUpdate: Record<string, unknown>) => {
+      const { currentWorkflow: wf, updateNodes } = useWorkflowStore.getState();
+      if (!wf) return;
+      updateNodes(
+        wf.nodes.map((n) =>
+          n.id === nodeId ? { ...n, config: { ...n.config, ...configUpdate } } : n,
+        ),
+      );
+    },
+    [],
+  );
+
+  const currentMultiAgentMode = useMemo<MultiAgentMode | undefined>(() => {
+    if (!selectedNode?.config) return undefined;
+    return (selectedNode.config as any)?.multi_agent_mode as MultiAgentMode | undefined;
+  }, [selectedNode]);
+
+  const currentAgentTeam = useMemo<AgentTeamMember[]>(() => {
+    if (!selectedNode?.config) return [];
+    return ((selectedNode.config as any)?.agent_team as AgentTeamMember[]) || [];
+  }, [selectedNode]);
 
   // ---------------------------------------------------------------------------
   // Save handler – merges React Flow positions into workflow nodes
@@ -578,6 +606,32 @@ export default function WorkflowEditor() {
                 onChange={(e) =>
                   updateNodeData(selectedNode.id, 'agent_id', e.target.value || undefined)
                 }
+              />
+            </div>
+
+            {/* Multi-Agent Config */}
+            <div
+              style={{
+                marginTop: 4,
+                padding: '12px 10px',
+                borderRadius: 6,
+                background: 'var(--bg-canvas)',
+                border: '1px solid var(--border-color)',
+              }}
+            >
+              <AgentConfigPanel
+                mode={currentMultiAgentMode}
+                team={currentAgentTeam}
+                defaultRole="executor"
+                onChange={({ mode, team }) => {
+                  if (!selectedNode) return;
+                  const cfg: Record<string, unknown> = {};
+                  if (mode) cfg.multi_agent_mode = mode;
+                  else cfg.multi_agent_mode = undefined;
+                  if (team) cfg.agent_team = team;
+                  else cfg.agent_team = [];
+                  updateNodeConfig(selectedNode.id, cfg);
+                }}
               />
             </div>
 
