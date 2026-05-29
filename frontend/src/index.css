@@ -5,23 +5,27 @@ html, body, #root { height: 100%; width: 100%; }
 :root {
   --bg-page: #f5f6fa;
   --bg-card: #ffffff;
+  --bg-subtle: #f0f2f5;
   --text-primary: #1a1d29;
   --text-secondary: #5a6170;
   --border-color: #e8eaf0;
   --bg-canvas: #f8f9fc;
+  --accent-soft: #f0f2ff;
   --scrollbar-thumb: #d0d5e0;
   --scrollbar-thumb-hover: #b0b7c8;
 }
 
 [data-theme="dark"] {
-  --bg-page: #141414;
-  --bg-card: #1f1f1f;
-  --text-primary: #e5e5e5;
-  --text-secondary: #999;
-  --border-color: #303030;
-  --bg-canvas: #1a1a1a;
-  --scrollbar-thumb: #555;
-  --scrollbar-thumb-hover: #777;
+  --bg-page: #0f1117;
+  --bg-card: #1a1d27;
+  --bg-subtle: #242836;
+  --text-primary: #f0f2f5;
+  --text-secondary: #a8b0bd;
+  --border-color: #3a4150;
+  --bg-canvas: #13151c;
+  --accent-soft: rgba(79, 110, 247, 0.18);
+  --scrollbar-thumb: #4a5160;
+  --scrollbar-thumb-hover: #5e6678;
 }
 
 body {
@@ -44,28 +48,72 @@ body {
 
 /* React Flow controls panel background in dark mode */
 [data-theme="dark"] .react-flow__controls-button {
-  background: #1f1f1f;
-  border-color: #303030;
-  color: #e5e5e5;
+  background: var(--bg-card);
+  border-color: var(--border-color);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .react-flow__minimap {
-  border-color: #303030 !important;
+  border-color: var(--border-color) !important;
 }
 
 [data-theme="dark"] .react-flow__attribution {
   background: transparent !important;
-  color: #555 !important;
+  color: var(--text-secondary) !important;
+}
+
+/* Ant Design dark mode contrast fixes */
+[data-theme="dark"] .ant-card {
+  background: var(--bg-card);
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .ant-card .ant-card-meta-title {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .ant-card .ant-card-meta-description {
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .ant-tag-default {
+  background: var(--bg-subtle);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .ant-menu-horizontal .ant-menu-item {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .ant-menu-horizontal .ant-menu-item-selected {
+  color: #6b8cff;
+}
+
+[data-theme="dark"] .ant-typography.ant-typography-secondary {
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .ant-btn-default {
+  background: var(--bg-subtle);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ant-btn-default:not(:disabled):hover {
+  background: #2d3342;
+  border-color: #4a5160;
+  color: var(--text-primary);
 }
 
 /* Ant Design Drawer extra background fix for dark mode */
 [data-theme="dark"] .ant-drawer-content {
-  background: #1f1f1f;
+  background: var(--bg-card);
 }
 
 [data-theme="dark"] .ant-drawer-header {
-  background: #1f1f1f;
-  border-bottom-color: #303030;
+  background: var(--bg-card);
+  border-bottom-color: var(--border-color);
 }
 
 /* Dashboard stat card hover effect */

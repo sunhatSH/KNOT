@@ -69,9 +69,9 @@ export default function WorkflowList() {
               alignItems: 'center',
               justifyContent: 'center',
               padding: '80px 24px',
-              background: '#fff',
+              background: 'var(--bg-card)',
               borderRadius: 8,
-              border: '1px solid #e8eaf0',
+              border: '1px solid var(--border-color)',
             }}
           >
             <div
@@ -79,7 +79,7 @@ export default function WorkflowList() {
                 width: 80,
                 height: 80,
                 borderRadius: 40,
-                background: '#f0f2ff',
+                background: 'var(--accent-soft, #f0f2ff)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -99,14 +99,14 @@ export default function WorkflowList() {
                 <Card
                   hoverable
                   onClick={() => navigate(`/workflows/${wf.id}`)}
-                  style={{ borderRadius: 8, border: '1px solid #e8eaf0' }}
+                  style={{ borderRadius: 8, border: '1px solid var(--border-color)' }}
                   actions={[
                     <NodeIndexOutlined key="edit" style={{ color: '#4f6ef7' }} />,
                   ]}
                 >
                   <Card.Meta
                     title={
-                      <span style={{ fontSize: 15, fontWeight: 600, color: '#1a1d29' }}>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
                         {wf.name}
                       </span>
                     }
