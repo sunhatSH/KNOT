@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Button, Spin, Typography, message, Space, Drawer, Descriptions, Tag, Modal, Input,
-  InputNumber, Select,
+  InputNumber, Select, Badge, List, Progress, Alert,
 } from 'antd';
 import {
   PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, ThunderboltOutlined,
   MenuOutlined, CloseOutlined, AppstoreOutlined, HistoryOutlined,
+  PauseCircleOutlined, StopOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import {
@@ -25,15 +26,15 @@ import {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-import { workflowApi } from '@/api/client';
-import { templateApi } from '@/api/client';
+import { workflowApi, executionApi, templateApi } from '@/api/client';
 import { useWorkflowStore } from '@/store/workflowStore';
-import type { Workflow, Execution, Node } from '@/types';
+import type { Workflow, Execution, Node, TraceEntry } from '@/types';
 import NodePalette from '@/components/NodePalette';
 import WorkflowNode from '@/components/WorkflowNode';
 import VersionHistory from '@/components/VersionHistory';
 import AgentConfigPanel from '@/components/AgentConfigPanel';
 import type { MultiAgentMode, AgentTeamMember } from '@/types';
+import { useExecutionWebSocket } from '@/hooks/useExecutionWebSocket';
 
 const { Title, Text } = Typography;
 
@@ -46,12 +47,33 @@ const nodeTypeLabels: Record<string, string> = {
   loop: '循环节点',
 };
 
+const executionStatusLabels: Record<string, string> = {
+  success: '成功',
+  failed: '失败',
+  running: '运行中',
+  pending: '等待中',
+  paused: '已暂停',
+  cancelled: '已取消',
+};
+
+const executionStatusColors: Record<string, string> = {
+  success: 'success',
+  failed: 'error',
+  running: 'processing',
+  pending: 'default',
+  paused: 'warning',
+  cancelled: 'default',
+};
+
 export default function WorkflowEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { currentWorkflow, loading, setCurrentWorkflow, setLoading } = useWorkflowStore();
   const [execution, setExecution] = useState<Execution | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [execPanelOpen, setExecPanelOpen] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [nlModalOpen, setNlModalOpen] = useState(false);
   const [nlInput, setNlInput] = useState('');
   const [nlGenerating, setNlGenerating] = useState(false);
@@ -71,6 +93,9 @@ export default function WorkflowEditor() {
   const [templateCategory, setTemplateCategory] = useState<string>('general');
   const [templateTagsStr, setTemplateTagsStr] = useState('');
   const [templateSaving, setTemplateSaving] = useState(false);
+
+  // Polling ref for execution state fallback
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ---------------------------------------------------------------------------
   // Responsive layout
@@ -151,6 +176,88 @@ export default function WorkflowEditor() {
       });
     }
   }, [id]);
+
+  // ---------------------------------------------------------------------------
+  // Execution: WebSocket real-time updates
+  // ---------------------------------------------------------------------------
+  const {
+    execution: wsExecution,
+    connected: wsConnected,
+  } = useExecutionWebSocket(execution?.id);
+
+  // When WS pushes a new state, update local state immediately
+  useEffect(() => {
+    if (wsExecution) {
+      setExecution(wsExecution);
+    }
+  }, [wsExecution]);
+
+  // ---------------------------------------------------------------------------
+  // Execution: sync node_states to React Flow node data (status highlighting)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!execution?.node_states) return;
+    setNodes((nds) =>
+      nds.map((n) => {
+        const execStatus = (execution.node_states as Record<string, string>)[n.id];
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            status: execStatus || n.data.status,
+          },
+        };
+      }),
+    );
+  }, [execution?.node_states, setNodes]);
+
+  // Clear node statuses when a new execution starts (no previous execution
+  // node_states to sync) -- handled naturally by the effect above since
+  // execution?.node_states will be fresh.
+
+  // ---------------------------------------------------------------------------
+  // Execution: REST polling fallback when WS is disconnected
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const isTerminal = execution?.status === 'success'
+      || execution?.status === 'failed'
+      || execution?.status === 'cancelled';
+
+    if (!execution?.id || isTerminal) {
+      if (pollingRef.current !== null) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
+
+    // If WS is connected, skip polling
+    if (wsConnected) {
+      if (pollingRef.current !== null) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
+
+    // Start polling (only if not already running)
+    if (pollingRef.current === null) {
+      pollingRef.current = setInterval(() => {
+        workflowApi.getExecution(execution.id).then((data) => {
+          setExecution(data);
+        }).catch(() => {
+          // Silently ignore polling errors
+        });
+      }, 3000);
+    }
+
+    return () => {
+      if (pollingRef.current !== null) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [execution?.id, execution?.status, wsConnected]);
 
   // ---------------------------------------------------------------------------
   // Helpers: update a single field on a node (both local state and store)
@@ -390,23 +497,75 @@ export default function WorkflowEditor() {
   }, [doSave, saveCommitMsg]);
 
   // ---------------------------------------------------------------------------
-  // Execute handler
+  // Execution: Trigger
   // ---------------------------------------------------------------------------
   const handleExecute = useCallback(async () => {
     if (!currentWorkflow) return;
+    if (!currentWorkflow.id || currentWorkflow.id === 'new') {
+      message.warning('请先保存工作流');
+      return;
+    }
+    if (currentWorkflow.nodes.length === 0) {
+      message.warning('工作流没有节点，请先添加节点');
+      return;
+    }
+    if (execution?.status === 'running') {
+      message.warning('工作流正在执行中');
+      return;
+    }
     try {
       const result = await workflowApi.execute(currentWorkflow.id);
       setExecution(result);
-      setDrawerOpen(true);
-      if (result.status === 'success') {
-        message.success('工作流执行成功');
-      } else {
-        message.error(`执行失败: ${result.error || result.status}`);
-      }
+      setExecPanelOpen(true);
     } catch (e: any) {
       message.error(`执行出错: ${e.message}`);
     }
-  }, [currentWorkflow]);
+  }, [currentWorkflow, execution?.status]);
+
+  // ---------------------------------------------------------------------------
+  // Execution: Pause / Resume / Cancel
+  // ---------------------------------------------------------------------------
+  const handlePause = useCallback(async () => {
+    if (!execution?.id) return;
+    setPausing(true);
+    try {
+      const data = await executionApi.pause(execution.id);
+      setExecution(data);
+      message.success('执行已暂停');
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || err?.message || '暂停执行失败');
+    } finally {
+      setPausing(false);
+    }
+  }, [execution?.id]);
+
+  const handleResume = useCallback(async () => {
+    if (!execution?.id) return;
+    setResuming(true);
+    try {
+      const data = await executionApi.resume(execution.id);
+      setExecution(data);
+      message.success('执行已恢复');
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || err?.message || '恢复执行失败');
+    } finally {
+      setResuming(false);
+    }
+  }, [execution?.id]);
+
+  const handleCancel = useCallback(async () => {
+    if (!execution?.id) return;
+    setCancelling(true);
+    try {
+      const data = await executionApi.cancel(execution.id);
+      setExecution(data);
+      message.success('执行已终止');
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || err?.message || '终止执行失败');
+    } finally {
+      setCancelling(false);
+    }
+  }, [execution?.id]);
 
   // ---------------------------------------------------------------------------
   // NL generation handler
@@ -478,6 +637,20 @@ export default function WorkflowEditor() {
   }, [currentWorkflow, templateName, templateDesc, templateCategory, templateTagsStr]);
 
   // ---------------------------------------------------------------------------
+  // Execution progress helpers
+  // ---------------------------------------------------------------------------
+  const executionProgress = useMemo(() => {
+    if (!execution?.node_states) return { total: 0, completed: 0, failed: 0, skipped: 0 };
+    const states = Object.values(execution.node_states);
+    return {
+      total: states.length,
+      completed: states.filter((s) => s === 'success').length,
+      failed: states.filter((s) => s === 'failed').length,
+      skipped: states.filter((s) => s === 'skipped').length,
+    };
+  }, [execution?.node_states]);
+
+  // ---------------------------------------------------------------------------
   // Loading state
   // ---------------------------------------------------------------------------
   if (loading) {
@@ -498,6 +671,8 @@ export default function WorkflowEditor() {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
+  const isExecuting = execution?.status === 'running' || execution?.status === 'paused';
+
   return (
     <div style={{ height: 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar */}
@@ -583,12 +758,103 @@ export default function WorkflowEditor() {
             type="primary"
             icon={<PlayCircleOutlined />}
             onClick={handleExecute}
+            disabled={!currentWorkflow?.id || currentWorkflow?.id === 'new' || execution?.status === 'running'}
             {...(isTiny ? { style: { width: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' } } : {})}
           >
             {isTiny ? undefined : '执行'}
           </Button>
         </Space>
       </div>
+
+      {/* Execution Status Banner */}
+      {isExecuting && (
+        <div
+          style={{
+            padding: '8px 20px',
+            background: execution?.status === 'running' ? '#e6f7ff' : '#fffbe6',
+            borderBottom: `1px solid ${execution?.status === 'running' ? '#91d5ff' : '#ffe58f'}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <Space>
+            <Spin indicator={<LoadingOutlined style={{ fontSize: 16 }} />} />
+            <Text strong style={{ fontSize: 14 }}>
+              {execution?.status === 'running' ? '工作流执行中...' : '工作流已暂停'}
+            </Text>
+            <Badge status={execution?.status === 'running' ? 'processing' : 'warning'} />
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              共 {currentWorkflow?.nodes.length || 0} 个节点
+            </Text>
+          </Space>
+          <Space>
+            {execution?.status === 'running' && (
+              <>
+                <Button size="small" icon={<PauseCircleOutlined />} loading={pausing} onClick={handlePause}>
+                  暂停
+                </Button>
+                <Button size="small" icon={<StopOutlined />} danger loading={cancelling} onClick={handleCancel}>
+                  终止
+                </Button>
+              </>
+            )}
+            {execution?.status === 'paused' && (
+              <>
+                <Button size="small" icon={<PlayCircleOutlined />} loading={resuming} onClick={handleResume}>
+                  恢复
+                </Button>
+                <Button size="small" icon={<StopOutlined />} danger loading={cancelling} onClick={handleCancel}>
+                  终止
+                </Button>
+              </>
+            )}
+            <Button size="small" onClick={() => setExecPanelOpen(true)}>
+              查看详情
+            </Button>
+          </Space>
+        </div>
+      )}
+
+      {/* Execution completed banner (transient, shows final summary) */}
+      {execution && !isExecuting && (
+        <div
+          style={{
+            padding: '6px 20px',
+            background: execution.status === 'success' ? '#f6ffed' : execution.status === 'failed' ? '#fff2f0' : '#fafafa',
+            borderBottom: `1px solid ${
+              execution.status === 'success' ? '#b7eb8f' : execution.status === 'failed' ? '#ffccc7' : '#d9d9d9'
+            }`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <Space>
+            <Badge status={executionStatusColors[execution.status] as 'success' | 'error' | 'default'} />
+            <Text strong style={{ fontSize: 14 }}>
+              {execution.status === 'success' ? '执行完成' :
+               execution.status === 'failed' ? '执行失败' :
+               execution.status === 'cancelled' ? '执行已取消' : ''}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              成功 {executionProgress.completed}
+              {executionProgress.failed > 0 && ` / 失败 ${executionProgress.failed}`}
+              {executionProgress.skipped > 0 && ` / 跳过 ${executionProgress.skipped}`}
+            </Text>
+          </Space>
+          <Space>
+            <Button size="small" onClick={() => setExecPanelOpen(true)}>
+              查看详情
+            </Button>
+            <Button size="small" onClick={() => setExecution(null)}>
+              关闭
+            </Button>
+          </Space>
+        </div>
+      )}
 
       {/* Main content: sidebar + canvas */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -930,47 +1196,212 @@ export default function WorkflowEditor() {
         </div>
       </Modal>
 
-      {/* Execution Result Drawer */}
+      {/* ------------------------------------------------------------------ */}
+      {/* Execution Panel Drawer                                             */}
+      {/* ------------------------------------------------------------------ */}
       <Drawer
-        title="执行结果"
+        title={
+          <Space>
+            <span>执行详情</span>
+            {execution && (
+              <Tag color={executionStatusColors[execution.status] || 'default'}>
+                {executionStatusLabels[execution.status] || execution.status}
+              </Tag>
+            )}
+            <Badge
+              status={wsConnected ? 'success' : 'default'}
+              text={
+                <Text type={wsConnected ? 'success' : 'secondary'} style={{ fontSize: 12 }}>
+                  {wsConnected ? '实时' : execution?.status === 'running' ? '轮询' : ''}
+                </Text>
+              }
+            />
+          </Space>
+        }
         placement="right"
         width={480}
-        onClose={() => setDrawerOpen(false)}
-        open={drawerOpen}
+        onClose={() => setExecPanelOpen(false)}
+        open={execPanelOpen}
       >
         {execution ? (
-          <div>
-            <Descriptions column={1} size="small">
-              <Descriptions.Item label="执行 ID">{execution.id}</Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag
-                  color={
-                    execution.status === 'success'
-                      ? 'green'
-                      : execution.status === 'failed'
-                        ? 'red'
-                        : 'blue'
-                  }
-                >
-                  {execution.status}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="节点状态">
-                {Object.entries(execution.node_states || {}).map(([nid, status]) => (
-                  <div key={nid}>
-                    {nid}: <Tag>{String(status)}</Tag>
-                  </div>
-                ))}
-              </Descriptions.Item>
-              {execution.error && (
-                <Descriptions.Item label="错误">
-                  <pre style={{ color: 'red', whiteSpace: 'pre-wrap' }}>{execution.error}</pre>
-                </Descriptions.Item>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Execution ID */}
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>
+                执行 ID
+              </Text>
+              <Text copyable style={{ fontSize: 13 }}>{execution.id}</Text>
+            </div>
+
+            {/* Start / End time */}
+            <div style={{ display: 'flex', gap: 24 }}>
+              {execution.started_at && (
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>
+                    开始时间
+                  </Text>
+                  <Text style={{ fontSize: 13 }}>{new Date(execution.started_at).toLocaleString()}</Text>
+                </div>
               )}
-            </Descriptions>
+              {execution.completed_at && (
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>
+                    完成时间
+                  </Text>
+                  <Text style={{ fontSize: 13 }}>{new Date(execution.completed_at).toLocaleString()}</Text>
+                </div>
+              )}
+            </div>
+
+            {/* Progress */}
+            {execution.node_states && executionProgress.total > 0 && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                  执行进度
+                </Text>
+                <Progress
+                  percent={Math.round(
+                    ((executionProgress.completed + executionProgress.failed) / executionProgress.total) * 100,
+                  )}
+                  status={
+                    execution.status === 'failed'
+                      ? 'exception'
+                      : execution.status === 'running' || execution.status === 'paused'
+                        ? 'active'
+                        : 'success'
+                  }
+                  format={() => `${executionProgress.completed + executionProgress.failed} / ${executionProgress.total}`}
+                />
+                <Space style={{ marginTop: 4 }}>
+                  <Text style={{ color: '#52c41a', fontSize: 12 }}>成功: {executionProgress.completed}</Text>
+                  {executionProgress.failed > 0 && (
+                    <Text style={{ color: '#ff4d4f', fontSize: 12 }}>失败: {executionProgress.failed}</Text>
+                  )}
+                  {executionProgress.skipped > 0 && (
+                    <Text style={{ color: '#8c8c8c', fontSize: 12 }}>跳过: {executionProgress.skipped}</Text>
+                  )}
+                </Space>
+              </div>
+            )}
+
+            {/* Control buttons */}
+            {isExecuting && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                {execution?.status === 'running' && (
+                  <>
+                    <Button icon={<PauseCircleOutlined />} loading={pausing} onClick={handlePause} size="small">
+                      暂停
+                    </Button>
+                    <Button icon={<StopOutlined />} danger loading={cancelling} onClick={handleCancel} size="small">
+                      终止
+                    </Button>
+                  </>
+                )}
+                {execution?.status === 'paused' && (
+                  <>
+                    <Button icon={<PlayCircleOutlined />} loading={resuming} onClick={handleResume} size="small">
+                      恢复
+                    </Button>
+                    <Button icon={<StopOutlined />} danger loading={cancelling} onClick={handleCancel} size="small">
+                      终止
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Error */}
+            {execution.error && (
+              <Alert
+                type="error"
+                showIcon
+                message="执行错误"
+                description={
+                  <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>
+                    {execution.error}
+                  </pre>
+                }
+              />
+            )}
+
+            {/* Trace / Log entries */}
+            <div>
+              <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>
+                执行追踪
+              </Text>
+              {execution.trace && execution.trace.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={execution.trace}
+                  renderItem={(entry: TraceEntry) => (
+                    <List.Item style={{ padding: '6px 0' }}>
+                      <div style={{ width: '100%' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Space size={4}>
+                            <Tag
+                              color={
+                                entry.event === 'node_complete' ? 'green' :
+                                entry.event === 'node_start' ? 'blue' :
+                                entry.event === 'node_failed' ? 'red' :
+                                entry.event === 'node_skipped' ? 'default' :
+                                entry.event === 'error' ? 'red' :
+                                'blue'
+                              }
+                              style={{ fontSize: 11, lineHeight: '18px' }}
+                            >
+                              {entry.event === 'node_complete' ? '完成' :
+                               entry.event === 'node_start' ? '开始' :
+                               entry.event === 'node_failed' ? '失败' :
+                               entry.event === 'node_skipped' ? '跳过' :
+                               entry.event === 'tool_call' ? '工具' :
+                               entry.event === 'knowledge_retrieval' ? '知识' :
+                               entry.event}
+                            </Tag>
+                            {entry.node_label && (
+                              <Text strong style={{ fontSize: 12 }}>{entry.node_label}</Text>
+                            )}
+                          </Space>
+                          {entry.timestamp && (
+                            <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                              {new Date(entry.timestamp).toLocaleTimeString()}
+                            </Text>
+                          )}
+                        </div>
+                        {entry.message && (
+                          <div style={{ marginTop: 2, marginLeft: 4 }}>
+                            <Text style={{ fontSize: 12, color: '#595959' }}>
+                              {entry.message}
+                            </Text>
+                          </div>
+                        )}
+                        {entry.duration_ms != null && (
+                          <div style={{ marginTop: 2, marginLeft: 4 }}>
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              耗时: {entry.duration_ms < 1000 ? `${entry.duration_ms}ms` : `${(entry.duration_ms / 1000).toFixed(2)}s`}
+                            </Text>
+                          </div>
+                        )}
+                      </div>
+                    </List.Item>
+                  )}
+                />
+              ) : (
+                <Text type="secondary" style={{ fontSize: 13 }}>
+                  {execution.status === 'running' ? '等待追踪数据...' : '暂无追踪记录'}
+                </Text>
+              )}
+            </div>
           </div>
         ) : (
-          <div>暂无执行结果</div>
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <Text type="secondary">暂无执行结果</Text>
+          </div>
         )}
       </Drawer>
     </div>

@@ -1,9 +1,11 @@
 import { Layout, Menu, Button } from 'antd';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
+  DashboardOutlined,
   NodeIndexOutlined,
   DatabaseOutlined,
   SettingOutlined,
+  BarChartOutlined,
   SunOutlined,
   MoonOutlined,
   GlobalOutlined,
@@ -15,6 +17,11 @@ const { Header } = Layout;
 
 const menuItems = [
   {
+    key: '/dashboard',
+    icon: <DashboardOutlined />,
+    label: '总览',
+  },
+  {
     key: '/workflows',
     icon: <NodeIndexOutlined />,
     label: '工作流',
@@ -23,6 +30,11 @@ const menuItems = [
     key: '/knowledge',
     icon: <DatabaseOutlined />,
     label: '知识库',
+  },
+  {
+    key: '/monitoring',
+    icon: <BarChartOutlined />,
+    label: '监控',
   },
   {
     key: '/settings',
@@ -39,6 +51,10 @@ export default function AppHeader() {
 
   const selectedKey = location.pathname.startsWith('/workflows')
     ? '/workflows'
+    : location.pathname.startsWith('/dashboard')
+    ? '/dashboard'
+    : location.pathname.startsWith('/monitoring')
+    ? '/monitoring'
     : location.pathname;
 
   return (

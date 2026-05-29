@@ -49,6 +49,7 @@ class LangGraphState(TypedDict):
     status: str
     error: str | None
     trace: list[dict[str, Any]]
+    node_retry_counts: dict[str, int]  # Persistent retry counter per node
 
 
 # ─── LangGraph Nodes ─────────────────────────────────────────────────────
@@ -385,9 +386,15 @@ def build_execute_node(
             new_node_statuses = dict(state.get("node_statuses", {}))
             new_node_statuses[node_id] = NodeStatus.FAILED.value
 
-            if node.max_retries > 0 and node.retry_count < node.max_retries:
-                node.retry_count += 1
-                logger.info("Retrying node %s (attempt %d/%d)", node_id, node.retry_count, node.max_retries)
+            # Use persistent retry counter from state (not node.retry_count
+            # which is reconstructed from the serialized workflow each time).
+            retry_counts = dict(state.get("node_retry_counts", {}))
+            current_retry = retry_counts.get(node_id, 0)
+
+            if node.max_retries > 0 and current_retry < node.max_retries:
+                current_retry += 1
+                retry_counts[node_id] = current_retry
+                logger.info("Retrying node %s (attempt %d/%d)", node_id, current_retry, node.max_retries)
                 if broadcast_fn:
                     retry_snapshot = _build_execution_snapshot(
                         execution_id=execution_id,
@@ -402,6 +409,7 @@ def build_execute_node(
                     await broadcast_fn(execution_id, retry_snapshot)
                 return {
                     "node_statuses": new_node_statuses,
+                    "node_retry_counts": retry_counts,
                     "current_index": idx,  # Re-run same node
                     "trace": new_trace,
                 }
@@ -687,6 +695,7 @@ class WorkflowEngine:
                 "current_index": 0,
                 "node_statuses": {},
                 "node_results": {},
+                "node_retry_counts": {},
                 "global_context": dict(workflow.global_context),
                 "status": WorkflowStatus.PENDING.value,
                 "error": None,

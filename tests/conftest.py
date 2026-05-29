@@ -1,7 +1,18 @@
-"""Pytest fixtures for KNOT backend tests."""
+"""Pytest fixtures for KNOT backend tests.
 
+Sets up the Python path and overrides the database URL to use an
+in-memory SQLite database so tests do not require a real PostgreSQL
+or Milvus instance.
+"""
+
+import os
 import sys
 from pathlib import Path
+
+# Override database URL so that engine creation during import
+# uses SQLite (which is always available with aiosqlite) instead
+# of the PostgreSQL URL defined in the .env file.
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
 
 # Add the backend source directory to sys.path so that
 # `from knot.core.models import ...` works when tests are run

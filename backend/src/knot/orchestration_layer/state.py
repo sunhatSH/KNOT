@@ -81,9 +81,10 @@ class WorkflowState:
             raise asyncio.CancelledError()
 
     def reset_control(self) -> None:
-        """Reset all control flags so the state can be reused."""
+        """Reset all control flags and status so the state can be reused."""
         self._control_event.set()
         self._cancelled = False
+        self._execution.status = WorkflowStatus.PENDING
 
     def get_global(self, key: str, default: Any = None) -> Any:
         """Read a value from global context."""

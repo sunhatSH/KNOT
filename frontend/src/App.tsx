@@ -8,6 +8,8 @@ import WorkflowEditor from '@/pages/WorkflowEditor';
 import ExecutionDetail from '@/pages/ExecutionDetail';
 import KnowledgePage from '@/pages/KnowledgePage';
 import SettingsPage from '@/pages/SettingsPage';
+import DashboardPage from '@/pages/DashboardPage';
+import MonitoringPage from '@/pages/MonitoringPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import { useAuthStore } from '@/store/authStore';
@@ -51,8 +53,8 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
 
-          {/* Redirect root to workflows */}
-          <Route path="/" element={<Navigate to="/workflows" replace />} />
+          {/* Redirect root to dashboard */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
           {/* Protected routes */}
           <Route
@@ -92,6 +94,22 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <SettingsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/monitoring"
+            element={
+              <ProtectedRoute>
+                <MonitoringPage />
               </ProtectedRoute>
             }
           />

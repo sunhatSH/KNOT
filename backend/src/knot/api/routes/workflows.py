@@ -127,6 +127,14 @@ def configure_routes(
         await _exec_repo.save(session, execution)
         return execution
 
+    @router.get("/executions")
+    async def list_executions(
+        session: AsyncSession = Depends(get_session),
+        limit: int = 50,
+    ) -> list[Execution]:
+        """List all executions, newest first."""
+        return await _exec_repo.list(session, limit=limit)
+
     @router.get("/executions/{execution_id}")
     async def get_execution(
         execution_id: str,

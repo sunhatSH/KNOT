@@ -12,6 +12,7 @@ from knot.api.routes import agents as agent_routes
 from knot.api.routes import auth as auth_routes
 from knot.api.routes import knowledge as knowledge_routes
 from knot.api.routes import templates as template_routes
+from knot.api.routes import metrics as metrics_routes
 from knot.api.routes import workflows as workflow_routes
 from knot.api.routes import ws as ws_routes
 from knot.api.routes.ws import ws_manager
@@ -98,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(template_routes.router)
     app.include_router(auth_routes.router)
     app.include_router(ws_routes.router)
+    app.include_router(metrics_routes.router)
     logger.info("JWT auth routes initialized at /api/v1/auth")
 
     @app.on_event("startup")

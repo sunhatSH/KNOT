@@ -242,6 +242,18 @@ class ExecutionRepository:
             return None
         return _execution_from_orm(model)
 
+    async def list(
+        self, session: AsyncSession, limit: int = 50
+    ) -> list[Execution]:
+        """List all executions, newest first."""
+        result = await session.execute(
+            select(ExecutionModel)
+            .order_by(ExecutionModel.started_at.desc().nullslast())
+            .limit(limit)
+        )
+        models = result.scalars().all()
+        return [_execution_from_orm(m) for m in models]
+
     async def list_by_workflow(
         self, session: AsyncSession, workflow_id: str
     ) -> list[Execution]:

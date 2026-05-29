@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { Handle, Position, useReactFlow, type NodeProps } from 'reactflow';
 import { CloseOutlined } from '@ant-design/icons';
 
@@ -23,6 +23,27 @@ function WorkflowNode({ id, data, selected }: NodeProps) {
   const [hovered, setHovered] = useState(false);
   const { deleteElements } = useReactFlow();
 
+  // Inject CSS keyframes for running pulse animation (global, one-time)
+  useEffect(() => {
+    const styleId = 'knot-node-anim';
+    if (!document.getElementById(styleId)) {
+      const s = document.createElement('style');
+      s.id = styleId;
+      s.textContent = `
+        @keyframes knot-running-pulse {
+          0% { box-shadow: 0 0 0 0 rgba(24, 144, 255, 0.4), 0 1px 3px rgba(0,0,0,0.08); }
+          70% { box-shadow: 0 0 0 8px rgba(24, 144, 255, 0), 0 1px 3px rgba(0,0,0,0.08); }
+          100% { box-shadow: 0 0 0 0 rgba(24, 144, 255, 0), 0 1px 3px rgba(0,0,0,0.08); }
+        }
+        @keyframes knot-running-border {
+          0%, 100% { border-color: #1890ff; }
+          50% { border-color: #69c0ff; }
+        }
+      `;
+      document.head.appendChild(s);
+    }
+  }, []);
+
   const nodeType = (data as Record<string, unknown>)?.type as string || 'task';
   const style = nodeTypeStyles[nodeType] || nodeTypeStyles.task;
   const status = (data as Record<string, unknown>)?.status as string | undefined;
@@ -40,15 +61,27 @@ function WorkflowNode({ id, data, selected }: NodeProps) {
       onMouseLeave={() => setHovered(false)}
       style={{
         background: style.bg,
-        border: `1.5px solid ${selected ? '#1677ff' : style.border}`,
+        border: `${
+          status === 'running' ? '2px solid #1890ff' :
+          status === 'success' ? '2px solid #52c41a' :
+          status === 'failed' ? '2px solid #ff4d4f' :
+          status === 'skipped' ? '2px solid #d9d9d9' :
+          selected ? '2px solid #1677ff' :
+          `1.5px solid ${style.border}`
+        }`,
         borderRadius: 8,
         padding: '8px 14px 8px 14px',
         minWidth: 150,
         position: 'relative',
-        boxShadow: selected
-          ? '0 0 0 2px rgba(22, 119, 255, 0.2), 0 1px 4px rgba(0,0,0,0.1)'
-          : '0 1px 3px rgba(0,0,0,0.08)',
+        boxShadow: status === 'running'
+          ? '0 0 0 2px rgba(24, 144, 255, 0.2), 0 1px 4px rgba(0,0,0,0.1)'
+          : selected
+            ? '0 0 0 2px rgba(22, 119, 255, 0.2), 0 1px 4px rgba(0,0,0,0.1)'
+            : '0 1px 3px rgba(0,0,0,0.08)',
         transition: 'box-shadow 0.15s',
+        animation: status === 'running'
+          ? 'knot-running-pulse 2s infinite, knot-running-border 1.5s infinite'
+          : undefined,
       }}
     >
       {/* Status indicator */}
