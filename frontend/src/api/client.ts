@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Workflow, Execution, User, AgentConfig } from '@/types';
+import type { Workflow, Execution, User, AgentConfig, WorkflowTemplate, WorkflowVersion } from '@/types';
 
 const client = axios.create({ baseURL: '/api/v1' });
 
@@ -43,6 +43,17 @@ export const workflowApi = {
 
   createFromNL: (description: string) =>
     client.post<Workflow>('/workflows/from-nl', { description }).then(r => r.data),
+
+  // ── Version History ──────────────────────────────────────────────────────
+
+  listVersions: (id: string) =>
+    client.get<WorkflowVersion[]>(`/workflows/${id}/versions`).then(r => r.data),
+
+  getVersion: (id: string, version: number) =>
+    client.get<WorkflowVersion>(`/workflows/${id}/versions/${version}`).then(r => r.data),
+
+  restoreVersion: (id: string, version: number) =>
+    client.post<Workflow>(`/workflows/${id}/versions/restore/${version}`).then(r => r.data),
 };
 
 export const executionApi = {
@@ -73,6 +84,20 @@ export const agentApi = {
   list: () => client.get<AgentConfig[]>('/api/v1/agents').then(r => r.data),
   register: (agent: Partial<AgentConfig>) =>
     client.post<AgentConfig>('/api/v1/agents', agent).then(r => r.data),
+};
+
+export const templateApi = {
+  list: () => client.get<WorkflowTemplate[]>('/templates').then(r => r.data),
+
+  get: (id: string) => client.get<WorkflowTemplate>(`/templates/${id}`).then(r => r.data),
+
+  save: (template: Partial<WorkflowTemplate>) =>
+    client.post<WorkflowTemplate>('/templates', template).then(r => r.data),
+
+  instantiate: (id: string) =>
+    client.post<Workflow>(`/templates/${id}/instantiate`).then(r => r.data),
+
+  delete: (id: string) => client.delete(`/templates/${id}`),
 };
 
 export const authApi = {

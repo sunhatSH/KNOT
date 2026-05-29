@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Col, Row, Spin, Tag, Typography, Empty } from 'antd';
-import { PlusOutlined, NodeIndexOutlined } from '@ant-design/icons';
+import { PlusOutlined, NodeIndexOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { workflowApi } from '@/api/client';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import TemplateSelector from '@/components/TemplateSelector';
 
 const { Title, Text } = Typography;
 
@@ -19,6 +20,7 @@ export default function WorkflowList() {
   const navigate = useNavigate();
   const { workflows, loading, setWorkflows, setLoading } = useWorkflowStore();
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
 
   const loadWorkflows = async () => {
     setLoading(true);
@@ -48,9 +50,14 @@ export default function WorkflowList() {
         <Title level={3} style={{ margin: 0 }}>
           工作流
         </Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/workflows/new')}>
-          新建工作流
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button icon={<AppstoreOutlined />} onClick={() => setTemplateModalOpen(true)}>
+            从模板创建
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/workflows/new')}>
+            新建工作流
+          </Button>
+        </div>
       </div>
 
       <Spin spinning={loading}>
@@ -129,6 +136,12 @@ export default function WorkflowList() {
           </Row>
         )}
       </Spin>
+
+      {/* Template Selector Modal */}
+      <TemplateSelector
+        open={templateModalOpen}
+        onClose={() => setTemplateModalOpen(false)}
+      />
     </div>
   );
 }

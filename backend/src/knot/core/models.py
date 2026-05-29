@@ -121,6 +121,7 @@ class Workflow(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     tags: list[str] = Field(default_factory=list)
+    versions: list[WorkflowVersion] = Field(default_factory=list)
 
     def get_node(self, node_id: str) -> Node | None:
         return next((n for n in self.nodes if n.id == node_id), None)
@@ -153,6 +154,22 @@ class Workflow(BaseModel):
                     queue.append(dep)
 
         return sorted_nodes
+
+
+# ─── Workflow Version ─────────────────────────────────────────────────────
+
+
+class WorkflowVersion(BaseModel):
+    """A snapshot version of a workflow at a point in time."""
+
+    version: int = 1
+    workflow_id: str
+    nodes: list[Node] = Field(default_factory=list)
+    edges: list[Edge] = Field(default_factory=list)
+    config: dict[str, Any] = Field(default_factory=dict)
+    saved_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    saved_by: str = ""  # username
+    message: str = ""   # commit message
 
 
 # ─── User / Auth ──────────────────────────────────────────────────────────
@@ -249,6 +266,28 @@ class KnowledgeChunk(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     embedding: list[float] | None = None
     score: float = 0.0
+
+
+# ─── Tool ─────────────────────────────────────────────────────────────────
+
+
+# ─── Workflow Template ────────────────────────────────────────────────────
+
+
+class WorkflowTemplate(BaseModel):
+    """A reusable workflow template that can be instantiated into a Workflow."""
+
+    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    name: str
+    description: str = ""
+    category: str = "general"  # general, ops, finance, medical, custom
+    nodes: list[Node] = Field(default_factory=list)
+    edges: list[Edge] = Field(default_factory=list)
+    config: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    usage_count: int = 0
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
 # ─── Tool ─────────────────────────────────────────────────────────────────

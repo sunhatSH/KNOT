@@ -382,7 +382,6 @@ export default function AgentConfigPanel({
                         Temperature
                       </Text>
                       <Slider
-                        size="small"
                         min={0}
                         max={2}
                         step={0.1}

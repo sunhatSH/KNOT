@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Layout } from 'antd';
 import AppHeader from '@/components/AppHeader';
+import NotificationContainer from '@/components/NotificationContainer';
 import WorkflowList from '@/pages/WorkflowList';
 import WorkflowEditor from '@/pages/WorkflowEditor';
 import ExecutionDetail from '@/pages/ExecutionDetail';
@@ -43,6 +44,7 @@ export default function App() {
   return (
     <Layout style={{ height: '100%' }}>
       {!isAuthPage && <AppHeader />}
+      <NotificationContainer />
       <Content>
         <Routes>
           {/* Public auth routes */}

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knot.core.database import get_session
-from knot.core.models import Execution, Workflow, WorkflowStatus
+from knot.core.models import Execution, Workflow, WorkflowStatus, WorkflowVersion
 from knot.core.repository import ExecutionRepository, WorkflowRepository
 from knot.llm.base import LLMProvider
 from knot.orchestration_layer.intent_understanding import nl_to_workflow
@@ -22,6 +22,19 @@ _exec_repo = ExecutionRepository()
 
 # Stored by configure_routes() so control endpoints can reach it.
 _engine: WorkflowEngine | None = None
+
+
+def _has_changed(old: Workflow, new: Workflow) -> bool:
+    """Return True if nodes or edges differ between two workflow snapshots."""
+    old_nodes = {(n.id, n.type, n.label) for n in old.nodes}
+    new_nodes = {(n.id, n.type, n.label) for n in new.nodes}
+    if old_nodes != new_nodes:
+        return True
+    old_edges = {(e.id, e.source_id, e.target_id) for e in old.edges}
+    new_edges = {(e.id, e.source_id, e.target_id) for e in new.edges}
+    if old_edges != new_edges:
+        return True
+    return False
 
 
 def configure_routes(
@@ -58,7 +71,25 @@ def configure_routes(
         workflow: Workflow,
         session: AsyncSession = Depends(get_session),
     ) -> Workflow:
-        """Create a new workflow definition."""
+        """Create or update a workflow definition. Auto-creates a version snapshot
+        when nodes or edges have changed."""
+        existing = await _wf_repo.get(session, workflow.id) if workflow.id else None
+        if existing:
+            # Check if nodes/edges changed
+            if _has_changed(existing, workflow):
+                next_ver = max((v.version for v in existing.versions), default=0) + 1
+                version = WorkflowVersion(
+                    version=next_ver,
+                    workflow_id=existing.id,
+                    nodes=existing.nodes,
+                    edges=existing.edges,
+                    config=existing.global_context,
+                    saved_by=workflow.versions[-1].saved_by if workflow.versions else "",
+                    message=workflow.versions[-1].message if workflow.versions else "",
+                )
+                workflow.versions = [*existing.versions, version]
+            else:
+                workflow.versions = existing.versions
         await _wf_repo.save(session, workflow)
         return workflow
 
@@ -168,3 +199,55 @@ def configure_routes(
             )
         state.request_cancel()
         return state.execution
+
+    # ── Version History Endpoints ─────────────────────────────────────────
+
+    @router.get("/{workflow_id}/versions")
+    async def list_versions(
+        workflow_id: str,
+        session: AsyncSession = Depends(get_session),
+    ) -> list[WorkflowVersion]:
+        """List all saved versions of a workflow."""
+        wf = await _wf_repo.get(session, workflow_id)
+        if not wf:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        return wf.versions
+
+    @router.get("/{workflow_id}/versions/{version:int}")
+    async def get_version(
+        workflow_id: str,
+        version: int,
+        session: AsyncSession = Depends(get_session),
+    ) -> WorkflowVersion:
+        """Get a specific version of a workflow."""
+        wf = await _wf_repo.get(session, workflow_id)
+        if not wf:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        for v in wf.versions:
+            if v.version == version:
+                return v
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    @router.post("/{workflow_id}/versions/restore/{version:int}")
+    async def restore_version(
+        workflow_id: str,
+        version: int,
+        session: AsyncSession = Depends(get_session),
+    ) -> Workflow:
+        """Restore a workflow to a previous version."""
+        wf = await _wf_repo.get(session, workflow_id)
+        if not wf:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        snapshot = None
+        for v in wf.versions:
+            if v.version == version:
+                snapshot = v
+                break
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="Version not found")
+
+        wf.nodes = snapshot.nodes
+        wf.edges = snapshot.edges
+        wf.global_context = snapshot.config
+        await _wf_repo.save(session, wf)
+        return wf

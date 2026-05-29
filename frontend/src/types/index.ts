@@ -92,3 +92,32 @@ export interface AgentTeamMember {
   role: AgentRole;
   temperature: number;
 }
+
+// ─── Workflow Version ───────────────────────────────────────────────────────
+
+export interface WorkflowVersion {
+  version: number;
+  workflow_id: string;
+  nodes: Node[];
+  edges: Edge[];
+  config: Record<string, unknown>;
+  saved_at: string;
+  saved_by: string;
+  message: string;
+}
+
+// ─── Workflow Template ──────────────────────────────────────────────────────
+
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  category: string;
+  nodes: Node[];
+  edges: Edge[];
+  config: Record<string, unknown>;
+  tags: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}

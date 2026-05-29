@@ -480,7 +480,7 @@ export default function KnowledgePage() {
                   {uploading && (
                     <div>
                       <Text style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
-                        正在处理文档（解析 -> 分块 -> 向量化 -> 存储）...
+                        正在处理文档（解析 → 分块 → 向量化 → 存储）...
                       </Text>
                       <Progress percent={uploadProgress} status="active" />
                     </div>

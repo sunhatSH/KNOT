@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Button, Spin, Typography, message, Space, Drawer, Descriptions, Tag, Modal, Input,
-  InputNumber,
+  InputNumber, Select,
 } from 'antd';
 import {
   PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, ThunderboltOutlined,
-  MenuOutlined, CloseOutlined,
+  MenuOutlined, CloseOutlined, AppstoreOutlined, HistoryOutlined,
 } from '@ant-design/icons';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import {
@@ -26,10 +26,12 @@ import {
 import 'reactflow/dist/style.css';
 
 import { workflowApi } from '@/api/client';
+import { templateApi } from '@/api/client';
 import { useWorkflowStore } from '@/store/workflowStore';
 import type { Workflow, Execution, Node } from '@/types';
 import NodePalette from '@/components/NodePalette';
 import WorkflowNode from '@/components/WorkflowNode';
+import VersionHistory from '@/components/VersionHistory';
 import AgentConfigPanel from '@/components/AgentConfigPanel';
 import type { MultiAgentMode, AgentTeamMember } from '@/types';
 
@@ -54,6 +56,21 @@ export default function WorkflowEditor() {
   const [nlInput, setNlInput] = useState('');
   const [nlGenerating, setNlGenerating] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  // Version history modal state
+  const [verHistoryOpen, setVerHistoryOpen] = useState(false);
+
+  // Save with commit message
+  const [saveMsgModalOpen, setSaveMsgModalOpen] = useState(false);
+  const [saveCommitMsg, setSaveCommitMsg] = useState('');
+
+  // Template save modal state
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
+  const [templateCategory, setTemplateCategory] = useState<string>('general');
+  const [templateTagsStr, setTemplateTagsStr] = useState('');
+  const [templateSaving, setTemplateSaving] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Responsive layout
@@ -319,7 +336,7 @@ export default function WorkflowEditor() {
   // ---------------------------------------------------------------------------
   // Save handler – merges React Flow positions into workflow nodes
   // ---------------------------------------------------------------------------
-  const handleSave = useCallback(async () => {
+  const doSave = useCallback(async (commitMsg?: string) => {
     if (!currentWorkflow) return;
 
     const nodesToSave = currentWorkflow.nodes.map((node) => {
@@ -337,12 +354,17 @@ export default function WorkflowEditor() {
     });
 
     try {
-      const saved = await workflowApi.create({
+      const payload: any = {
         name: currentWorkflow.name,
         description: currentWorkflow.description,
         nodes: nodesToSave,
         edges: currentWorkflow.edges,
-      });
+      };
+      // Attach commit message as a temporary version entry for the backend
+      if (commitMsg) {
+        payload.versions = [{ version: 0, workflow_id: currentWorkflow.id || '', message: commitMsg }];
+      }
+      const saved = await workflowApi.create(payload);
       setCurrentWorkflow(saved);
       message.success('工作流已保存');
       if (id === 'new') navigate(`/workflows/${saved.id}`, { replace: true });
@@ -350,6 +372,22 @@ export default function WorkflowEditor() {
       message.error(`保存失败: ${e.message}`);
     }
   }, [currentWorkflow, nodes, id, navigate, setCurrentWorkflow]);
+
+  const handleSave = useCallback(() => {
+    if (!currentWorkflow) return;
+    // If workflow already exists, prompt for commit message
+    if (currentWorkflow.id && currentWorkflow.id !== 'new' && id !== 'new') {
+      setSaveCommitMsg('');
+      setSaveMsgModalOpen(true);
+    } else {
+      doSave();
+    }
+  }, [currentWorkflow, id, doSave]);
+
+  const handleSaveWithMessage = useCallback(() => {
+    setSaveMsgModalOpen(false);
+    doSave(saveCommitMsg);
+  }, [doSave, saveCommitMsg]);
 
   // ---------------------------------------------------------------------------
   // Execute handler
@@ -394,6 +432,50 @@ export default function WorkflowEditor() {
       setNlGenerating(false);
     }
   }, [nlInput, navigate, setCurrentWorkflow]);
+
+  // ---------------------------------------------------------------------------
+  // Save as template handler
+  // ---------------------------------------------------------------------------
+  const handleSaveAsTemplate = useCallback(async () => {
+    if (!currentWorkflow) return;
+    if (!templateName.trim()) {
+      message.warning('请输入模板名称');
+      return;
+    }
+    if (!currentWorkflow.nodes || currentWorkflow.nodes.length === 0) {
+      message.warning('工作流没有节点，无法保存为模板');
+      return;
+    }
+
+    setTemplateSaving(true);
+    try {
+      const tags = templateTagsStr
+        .split(/[,，]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const saved = await templateApi.save({
+        name: templateName.trim(),
+        description: templateDesc.trim(),
+        category: templateCategory,
+        tags,
+        nodes: currentWorkflow.nodes,
+        edges: currentWorkflow.edges,
+        config: currentWorkflow.global_context,
+      });
+      message.success(`模板「${saved.name}」保存成功`);
+      setTemplateModalOpen(false);
+      // Reset form
+      setTemplateName('');
+      setTemplateDesc('');
+      setTemplateCategory('general');
+      setTemplateTagsStr('');
+    } catch (e: any) {
+      message.error(`保存模板失败: ${e.message}`);
+    } finally {
+      setTemplateSaving(false);
+    }
+  }, [currentWorkflow, templateName, templateDesc, templateCategory, templateTagsStr]);
 
   // ---------------------------------------------------------------------------
   // Loading state
@@ -476,6 +558,26 @@ export default function WorkflowEditor() {
             onClick={handleSave}
           >
             {isTiny ? undefined : '保存'}
+          </Button>
+          <Button
+            icon={<AppstoreOutlined />}
+            {...(isTiny ? { type: 'text', style: { color: 'var(--text-secondary, #5a6170)' } } : {})}
+            onClick={() => {
+              if (currentWorkflow && currentWorkflow.nodes.length > 0) {
+                setTemplateModalOpen(true);
+              } else {
+                message.warning('请先添加节点再保存为模板');
+              }
+            }}
+          >
+            {isTiny ? undefined : '保存为模板'}
+          </Button>
+          <Button
+            icon={<HistoryOutlined />}
+            {...(isTiny ? { type: 'text', style: { color: 'var(--text-secondary, #5a6170)' } } : {})}
+            onClick={() => setVerHistoryOpen(true)}
+          >
+            {isTiny ? undefined : '版本历史'}
           </Button>
           <Button
             type="primary"
@@ -715,6 +817,117 @@ export default function WorkflowEditor() {
             disabled={nlGenerating}
           />
         </Spin>
+      </Modal>
+
+      {/* Save as Template Modal */}
+      <Modal
+        title="保存为模板"
+        open={templateModalOpen}
+        onCancel={() => {
+          if (!templateSaving) {
+            setTemplateModalOpen(false);
+          }
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => setTemplateModalOpen(false)} disabled={templateSaving}>
+            取消
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            icon={<AppstoreOutlined />}
+            loading={templateSaving}
+            onClick={handleSaveAsTemplate}
+          >
+            保存模板
+          </Button>,
+        ]}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+              模板名称 <span style={{ color: '#ff4d4f' }}>*</span>
+            </Text>
+            <Input
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="输入模板名称"
+              disabled={templateSaving}
+            />
+          </div>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+              描述
+            </Text>
+            <Input.TextArea
+              rows={3}
+              value={templateDesc}
+              onChange={(e) => setTemplateDesc(e.target.value)}
+              placeholder="描述这个模板的用途"
+              disabled={templateSaving}
+            />
+          </div>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+              分类
+            </Text>
+            <Select
+              value={templateCategory}
+              onChange={setTemplateCategory}
+              style={{ width: '100%' }}
+              disabled={templateSaving}
+              options={[
+                { value: 'general', label: '通用' },
+                { value: 'ops', label: '运维监控' },
+                { value: 'finance', label: '金融合规' },
+                { value: 'medical', label: '医疗健康' },
+                { value: 'custom', label: '自定义' },
+              ]}
+            />
+          </div>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+              标签（逗号分隔）
+            </Text>
+            <Input
+              value={templateTagsStr}
+              onChange={(e) => setTemplateTagsStr(e.target.value)}
+              placeholder="例如: 监控,告警,自动化"
+              disabled={templateSaving}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Version History Modal */}
+      {currentWorkflow?.id && id !== 'new' && (
+        <VersionHistory
+          open={verHistoryOpen}
+          onClose={() => setVerHistoryOpen(false)}
+          workflowId={currentWorkflow.id}
+        />
+      )}
+
+      {/* Save Commit Message Modal */}
+      <Modal
+        title="保存版本"
+        open={saveMsgModalOpen}
+        onCancel={() => setSaveMsgModalOpen(false)}
+        onOk={handleSaveWithMessage}
+        okText="保存"
+        cancelText="取消"
+      >
+        <div style={{ marginBottom: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+            提交说明（可选）
+          </Text>
+          <Input
+            value={saveCommitMsg}
+            onChange={(e) => setSaveCommitMsg(e.target.value)}
+            placeholder="简要描述本次变更内容"
+            onPressEnter={handleSaveWithMessage}
+          />
+        </div>
       </Modal>
 
       {/* Execution Result Drawer */}
